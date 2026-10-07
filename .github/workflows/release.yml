@@ -1,0 +1,92 @@
+name: Release
+
+# Every push to main builds a release, but only when the version in
+# src-tauri/tauri.conf.json has not been released yet. So: bump the version,
+# push to main, and a few minutes later a new installer is published. Apps that
+# are already installed find it the next time they are opened and update
+# themselves silently.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags are needed for the version check below
+
+      - name: Is this version already released?
+        id: ver
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "version=$version" >> $env:GITHUB_OUTPUT
+          if (git tag --list "v$version") {
+            "release=false" >> $env:GITHUB_OUTPUT
+            Write-Host "v$version is already released; nothing to do."
+          } else {
+            "release=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Releasing v$version."
+          }
+
+      - uses: actions/setup-node@v4
+        if: steps.ver.outputs.release == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.ver.outputs.release == 'true'
+
+      - uses: swatinem/rust-cache@v2
+        if: steps.ver.outputs.release == 'true'
+        with:
+          workspaces: src-tauri
+
+      # The Google connection runs through uv. Shipping it inside the installer
+      # means users do not have to install anything.
+      - name: Bundle uv
+        if: steps.ver.outputs.release == 'true'
+        shell: pwsh
+        run: |
+          $uvVersion = "0.12.0"
+          Invoke-WebRequest "https://github.com/astral-sh/uv/releases/download/$uvVersion/uv-x86_64-pc-windows-msvc.zip" -OutFile uv.zip
+          Expand-Archive uv.zip -DestinationPath uv-tmp
+          $uv = Get-ChildItem uv-tmp -Recurse -Filter uv.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force src-tauri/resources | Out-Null
+          Copy-Item $uv.FullName src-tauri/resources/uv.exe
+          Get-ChildItem src-tauri/resources
+
+      - name: Install dependencies
+        if: steps.ver.outputs.release == 'true'
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        if: steps.ver.outputs.release == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update so installed apps trust it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Baked into the app at build time (optional; see README).
+          LEO_GOOGLE_CLIENT_ID: ${{ secrets.LEO_GOOGLE_CLIENT_ID }}
+          LEO_GOOGLE_CLIENT_SECRET: ${{ secrets.LEO_GOOGLE_CLIENT_SECRET }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Leo v__VERSION__
+          releaseBody: |
+            Download the installer below and run it.
+            Leo is already installed? Just open it: it updates itself.
+          releaseDraft: false
+          prerelease: false

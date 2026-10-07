@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Leo</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body data-mode="full">
+    <div id="drag-strip" data-tauri-drag-region></div>
+
+    <div id="widget" data-state="idle">
+      <header id="topbar" data-tauri-drag-region>
+        <span id="status" data-tauri-drag-region>
+          <i id="status-dot" data-tauri-drag-region></i>
+          <span id="status-text" data-tauri-drag-region>Ready</span>
+        </span>
+        <div id="toolbar">
+          <button id="new-chat-btn" class="full-only" title="New chat" aria-label="New chat">
+            <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+          </button>
+          <button id="settings-btn" class="full-only" title="Settings" aria-label="Settings">
+            <svg viewBox="0 0 16 16" width="14" height="14"><path d="M2 5h6M12 5h2M2 11h2M8 11h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><circle cx="10" cy="5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="11" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+          </button>
+          <button id="minimize-btn" class="full-only" title="Minimize to widget" aria-label="Minimize to widget">
+            <svg viewBox="0 0 16 16" width="14" height="14"><path d="M3 12h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+          </button>
+          <button id="expand-btn" class="widget-only" title="Open chat" aria-label="Open chat">
+            <svg viewBox="0 0 16 16" width="12" height="12"><path d="M9 3h4v4M7 13H3V9M13 3L9 7M3 13l4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          </button>
+          <button id="close-btn" title="Close" aria-label="Close">
+            <svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="orb-wrap">
+        <canvas id="orb" aria-label="Leo"></canvas>
+      </div>
+
+      <div id="caption" class="hidden"></div>
+
+      <section id="chat">
+        <div id="messages" aria-live="polite">
+          <div id="empty">
+            <h1>What can I do for you?</h1>
+            <p>Ask anything, or tell me what to do.</p>
+          </div>
+        </div>
+
+        <form id="composer" autocomplete="off">
+          <textarea id="composer-input" rows="1" placeholder="Message Leo" spellcheck="true"></textarea>
+          <button type="submit" id="send-btn" title="Send" aria-label="Send" disabled>
+            <svg viewBox="0 0 16 16" width="16" height="16"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          </button>
+        </form>
+      </section>
+
+      <!-- Settings window: opens over the chat. -->
+      <div id="settings" class="hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="sheet">
+          <header class="sheet-head">
+            <h2 id="settings-title">Settings</h2>
+            <button type="button" id="settings-close" class="icon-btn" aria-label="Close settings">
+              <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+            </button>
+          </header>
+
+          <div class="sheet-body">
+            <section class="group">
+              <div class="group-head">
+                <h3>AI model</h3>
+                <span class="chip-status" id="chip-ai"></span>
+              </div>
+              <p class="hint">Leo thinks and answers through OpenRouter. You need a key and a model.</p>
+
+              <div class="field">
+                <div class="field-head">
+                  <label for="api-key">OpenRouter API key</label>
+                  <a class="get-key" href="https://openrouter.ai/keys" data-ext>Get a key</a>
+                </div>
+                <div class="secret">
+                  <input id="api-key" type="password" placeholder="sk-or-..." autocomplete="off" spellcheck="false" />
+                  <button type="button" class="reveal" data-target="api-key" aria-label="Show or hide the key">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-head">
+                  <label for="model-name">Model name</label>
+                  <a class="get-key" href="https://openrouter.ai/models?supported_parameters=tools" data-ext>Browse models</a>
+                </div>
+                <input id="model-name" type="text" placeholder="provider/model-name" autocomplete="off" spellcheck="false" />
+                <p class="hint small">Choose a model that supports tool use.</p>
+              </div>
+            </section>
+
+            <section class="group">
+              <div class="group-head">
+                <h3>Long-term memory</h3>
+                <span class="chip-status" id="chip-memory"></span>
+              </div>
+              <p class="hint">Lets Leo remember facts about you between chats.</p>
+              <div class="field">
+                <div class="field-head">
+                  <label for="memory-key">MemoryLake API key</label>
+                  <a class="get-key" href="https://app.memorylake.ai" data-ext>Get a key</a>
+                </div>
+                <div class="secret">
+                  <input id="memory-key" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+                  <button type="button" class="reveal" data-target="memory-key" aria-label="Show or hide the key">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="group">
+              <div class="group-head">
+                <h3>Web search</h3>
+                <span class="chip-status" id="chip-search"></span>
+              </div>
+              <p class="hint">Lets Leo look things up on the web.</p>
+              <div class="field">
+                <div class="field-head">
+                  <label for="search-key">Tavily API key</label>
+                  <a class="get-key" href="https://app.tavily.com/home" data-ext>Get a key</a>
+                </div>
+                <div class="secret">
+                  <input id="search-key" type="password" placeholder="tvly-..." autocomplete="off" spellcheck="false" />
+                  <button type="button" class="reveal" data-target="search-key" aria-label="Show or hide the key">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="group">
+              <div class="group-head">
+                <h3>Google</h3>
+                <span class="chip-status" id="chip-google"></span>
+              </div>
+              <p class="hint">Gmail, Calendar, Drive, Docs, Sheets, Slides and Contacts. Leo asks you to sign in with Google in your browser the first time it needs them.</p>
+              <div class="field">
+                <div class="field-head">
+                  <label for="google-email">Your Google account email</label>
+                </div>
+                <input id="google-email" type="text" inputmode="email" placeholder="you@gmail.com" autocomplete="off" spellcheck="false" />
+              </div>
+            </section>
+
+            <section class="group">
+              <div class="group-head"><h3>Appearance</h3></div>
+              <label class="toggle-row" for="blur-toggle">
+                <span>Blur behind window</span>
+                <input id="blur-toggle" type="checkbox" />
+              </label>
+              <div class="range-head">
+                <label for="transparency">Window transparency</label>
+                <span id="transparency-value">90%</span>
+              </div>
+              <input id="transparency" type="range" min="0" max="100" step="1" value="90" />
+            </section>
+          </div>
+
+          <footer class="sheet-foot">
+            <p id="settings-status" role="status"></p>
+            <button type="button" id="save-key-btn">Save</button>
+          </footer>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

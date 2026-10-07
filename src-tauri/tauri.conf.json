@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Leo",
+  "version": "0.1.0",
+  "identifier": "com.priyanshu-madhup.siri-orb",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Leo",
+        "width": 440,
+        "height": 700,
+        "minWidth": 160,
+        "minHeight": 150,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": false,
+        "shadow": false,
+        "visible": false,
+        "center": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "createUpdaterArtifacts": true,
+    "publisher": "Priyanshu Madhup",
+    "shortDescription": "Leo, an AI assistant with a living orb",
+    "longDescription": "Leo is a desktop AI assistant with a living 3D orb. It chats, searches the web, remembers things about you and works with your Gmail, Calendar and Drive, always asking before it changes anything.",
+    "category": "Productivity",
+    "copyright": "Copyright (c) Priyanshu Madhup",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/*"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "English"
+        ],
+        "displayLanguageSelector": false
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzNjVGRDdBN0Y2NDE4ODAKUldTQUdHUi9ldjFsWTFNbGphTG5jSDNFaTdsamdYZEdSbDB4YzlWZElQeVNIMlZyYTQ0YlZJYjMK",
+      "endpoints": [
+        "https://github.com/Priyanshu-Madhup/Leo-AI/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "quiet"
+      }
+    }
+  }
+}
