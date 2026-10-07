@@ -82,7 +82,10 @@ pub async fn run(
             let name = call.function.name.clone();
             // Only the two memory tools are ever offered; refuse anything else.
             let allowed = matches!(name.as_str(), "recall_memory" | "remember");
-            if allowed {
+            // The duplicate check is background housekeeping; only an actual
+            // save is shown in the chat.
+            let visible = name == "remember";
+            if visible {
                 emit(
                     &app,
                     crate::agent::tool_start(&call),
@@ -93,7 +96,7 @@ pub async fn run(
             } else {
                 Err(format!("Tool not available: {name}"))
             };
-            if allowed {
+            if visible {
                 emit(
                     &app,
                     AgentEvent::ToolResult {
