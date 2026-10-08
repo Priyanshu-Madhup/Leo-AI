@@ -16,6 +16,7 @@ const STORAGE_SEARCH_KEY = "leo.tavily.key";
 const STORAGE_GOOGLE_EMAIL = "leo.google.email";
 const STORAGE_MODE = "leo.mode";
 const STORAGE_BLUR = "leo.blur";
+const STORAGE_SHORTCUT = "leo.shortcut";
 const STORAGE_TRANSPARENCY = "leo.transparency";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#orb")!;
@@ -41,6 +42,8 @@ const verifierModelInput = document.querySelector<HTMLInputElement>("#verifier-m
 const memoryKeyInput = document.querySelector<HTMLInputElement>("#memory-key")!;
 const searchKeyInput = document.querySelector<HTMLInputElement>("#search-key")!;
 const googleEmailInput = document.querySelector<HTMLInputElement>("#google-email")!;
+const shortcutInput = document.querySelector<HTMLInputElement>("#shortcut-input")!;
+const shortcutClear = document.querySelector<HTMLButtonElement>("#shortcut-clear")!;
 const blurToggle = document.querySelector<HTMLInputElement>("#blur-toggle")!;
 const transparencySlider = document.querySelector<HTMLInputElement>("#transparency")!;
 const transparencyValue = document.querySelector<HTMLSpanElement>("#transparency-value")!;
@@ -609,7 +612,56 @@ async function refreshStatus() {
   }
 }
 
+// ---------- global shortcut ----------
+// Click the field and press a combination; it is stored as an accelerator
+// string ("Ctrl+Alt+L") that the Rust side registers system-wide.
+function acceleratorFrom(event: KeyboardEvent): string | null {
+  const code = event.code;
+  let key: string | null = null;
+  if (/^Key[A-Z]$/.test(code)) key = code.slice(3);
+  else if (/^Digit\d$/.test(code)) key = code.slice(5);
+  else if (/^F([1-9]|1\d|2[0-4])$/.test(code)) key = code;
+  else if (code === "Space") key = "Space";
+  else if (/^Arrow(Up|Down|Left|Right)$/.test(code)) key = code.slice(5);
+  if (!key) return null;
+  const mods: string[] = [];
+  if (event.ctrlKey) mods.push("Ctrl");
+  if (event.altKey) mods.push("Alt");
+  if (event.shiftKey) mods.push("Shift");
+  if (event.metaKey) mods.push("Super");
+  // A bare letter would steal normal typing everywhere; function keys are fine.
+  if (mods.length === 0 && !/^F\d+$/.test(key)) return null;
+  return [...mods, key].join("+");
+}
+
+shortcutInput.addEventListener("keydown", (event) => {
+  if (event.key === "Tab") return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.key === "Escape") {
+    shortcutInput.blur();
+    return;
+  }
+  if (event.key === "Backspace" || event.key === "Delete") {
+    shortcutInput.value = "";
+    return;
+  }
+  const accel = acceleratorFrom(event);
+  if (accel) shortcutInput.value = accel;
+});
+shortcutClear.addEventListener("click", () => {
+  shortcutInput.value = "";
+});
+
+async function applyShortcut(): Promise<void> {
+  await invoke("set_shortcut", { shortcut: localStorage.getItem(STORAGE_SHORTCUT) ?? "" });
+}
+applyShortcut().catch(() => {
+  // A shortcut another app now owns must not stop Leo from starting.
+});
+
 function fillSettings() {
+  shortcutInput.value = localStorage.getItem(STORAGE_SHORTCUT) ?? "";
   apiKeyInput.value = getApiKey();
   modelInput.value = getModel();
   plannerModelInput.value = getPlannerModel();
@@ -671,6 +723,17 @@ saveBtn.addEventListener("click", async () => {
   localStorage.setItem(STORAGE_SEARCH_KEY, searchKeyInput.value.trim());
   localStorage.setItem(STORAGE_GOOGLE_EMAIL, googleEmailInput.value.trim());
   try {
+    const previous = localStorage.getItem(STORAGE_SHORTCUT) ?? "";
+    localStorage.setItem(STORAGE_SHORTCUT, shortcutInput.value);
+    try {
+      await applyShortcut();
+    } catch (err) {
+      localStorage.setItem(STORAGE_SHORTCUT, previous);
+      void applyShortcut().catch(() => {});
+      shortcutInput.value = previous;
+      settingsStatus.textContent = errorMessage(err);
+      return;
+    }
     await Promise.all([configureSearch(true), configureMemory(true), configureGoogleEmail(true)]);
   } catch (err) {
     settingsStatus.textContent = errorMessage(err);

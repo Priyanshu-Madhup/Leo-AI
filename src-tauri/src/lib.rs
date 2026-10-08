@@ -201,11 +201,36 @@ fn set_mode(window: WebviewWindow, mode: String) -> Result<(), String> {
     apply_mode(&window, &mode).map_err(|e| e.to_string())
 }
 
+/// Sets (or, when empty, clears) the global shortcut that brings Leo to the
+/// front from anywhere. Only one shortcut is ever registered.
+#[tauri::command]
+fn set_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let gs = app.global_shortcut();
+    gs.unregister_all().map_err(|e| e.to_string())?;
+    let shortcut = shortcut.trim();
+    if shortcut.is_empty() {
+        return Ok(());
+    }
+    gs.on_shortcut(shortcut, |app, _shortcut, event| {
+        if event.state() != ShortcutState::Pressed {
+            return;
+        }
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    })
+    .map_err(|_| "That shortcut isn't valid or is already used by another app.".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(agent::AgentState::default())
         .manage(memory::MemoryState::default())
         .manage(mcp::McpManager::default())
@@ -223,7 +248,8 @@ pub fn run() {
             mcp::mcp_status,
             mcp::mcp_set_inject,
             set_mode,
-            set_blur
+            set_blur,
+            set_shortcut
         ])
         .setup(|app| {
             // Debug builds only: a headless timing run, switched on by env vars.

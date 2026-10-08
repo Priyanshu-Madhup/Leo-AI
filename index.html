@@ -166,6 +166,22 @@
             </section>
 
             <section class="group">
+              <div class="group-head"><h3>Shortcut</h3></div>
+              <p class="hint">A key combination that brings Leo to the front from anywhere, even when it is minimised.</p>
+              <div class="field">
+                <div class="field-head">
+                  <label for="shortcut-input">Open Leo with</label>
+                </div>
+                <div class="secret">
+                  <input id="shortcut-input" type="text" placeholder="Click, then press keys" autocomplete="off" spellcheck="false" readonly />
+                  <button type="button" class="reveal" id="shortcut-clear" aria-label="Clear the shortcut">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="group">
               <div class="group-head"><h3>Appearance</h3></div>
               <label class="toggle-row" for="blur-toggle">
                 <span>Blur behind window</span>
