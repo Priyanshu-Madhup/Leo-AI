@@ -399,7 +399,7 @@ const ICONS: Record<string, string> = {
 // Logos are image files in src/assets/logos, bundled with the app. A file's
 // name (without extension) is its key, e.g. gmail.png or wikipedia.org.svg.
 // Vite resolves the list at build time, so a missing logo is known instantly.
-const LOGO_FILES = import.meta.glob<string>("./assets/logos/*.{png,svg,webp,jpg,jpeg}", {
+const LOGO_FILES = import.meta.glob<string>(["./assets/logos/*.{png,svg,webp,jpg,jpeg}", "!./assets/logos/leo-app-icon.png"], {
   eager: true,
   query: "?url",
   import: "default",
