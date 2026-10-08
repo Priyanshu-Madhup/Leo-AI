@@ -653,6 +653,14 @@ shortcutClear.addEventListener("click", () => {
   shortcutInput.value = "";
 });
 
+// Pressing the shortcut: the orb widget grows to the full chat, and pressing
+// it again shrinks the chat back to the widget. Coming back from the taskbar
+// only shows the window.
+void listen<boolean>("shortcut://pressed", (event) => {
+  if (event.payload && mode === "full") return;
+  void setMode(mode === "widget" ? "full" : "widget");
+});
+
 async function applyShortcut(): Promise<void> {
   await invoke("set_shortcut", { shortcut: localStorage.getItem(STORAGE_SHORTCUT) ?? "" });
 }

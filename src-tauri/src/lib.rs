@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewWindow, WindowEvent};
 
 mod agent;
 mod agents;
@@ -216,10 +216,16 @@ fn set_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
         if event.state() != ShortcutState::Pressed {
             return;
         }
+        eprintln!("[shortcut] pressed");
         if let Some(window) = app.get_webview_window("main") {
+            // Brought back from the taskbar: just show it. Otherwise the
+            // frontend flips between the orb widget and the full chat.
+            let restored = window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true);
             let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_focus();
+            eprintln!("[shortcut] restored={restored}");
+            let _ = app.emit("shortcut://pressed", restored);
         }
     })
     .map_err(|_| "That shortcut isn't valid or is already used by another app.".to_string())
