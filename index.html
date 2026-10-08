@@ -96,6 +96,19 @@
                 <input id="model-name" type="text" placeholder="provider/model-name" autocomplete="off" spellcheck="false" />
                 <p class="hint small">Choose a model that supports tool use.</p>
               </div>
+
+              <details class="advanced">
+                <summary>Advanced: models for planning and checking</summary>
+                <p class="hint small">For multi-step jobs, Leo plans the steps and checks each result. Leave these blank to use the model above, or pick a stronger planner or a cheaper checker.</p>
+                <div class="field">
+                  <div class="field-head"><label for="planner-model">Planner model (optional)</label></div>
+                  <input id="planner-model" type="text" placeholder="same as above" autocomplete="off" spellcheck="false" />
+                </div>
+                <div class="field">
+                  <div class="field-head"><label for="verifier-model">Checker model (optional)</label></div>
+                  <input id="verifier-model" type="text" placeholder="same as above" autocomplete="off" spellcheck="false" />
+                </div>
+              </details>
             </section>
 
             <section class="group">

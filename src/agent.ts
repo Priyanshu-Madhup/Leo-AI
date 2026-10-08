@@ -15,6 +15,7 @@ export interface AskOption {
 export type AgentEvent =
   | { kind: "tool_start"; id: string; name: string; label: string; detail?: string | null; brand?: Brand }
   | { kind: "tool_result"; id: string; name: string; ok: boolean; error?: string | null }
+  | { kind: "progress"; text: string }
   | { kind: "ask_user"; id: string; question: string; options: AskOption[] }
   | { kind: "approval_request"; id: string; name: string; label: string; args: Record<string, unknown> };
 
@@ -36,6 +37,8 @@ export class AgentClient {
   constructor(
     private getApiKey: () => string,
     private getModel: () => string,
+    private getPlannerModel: () => string,
+    private getVerifierModel: () => string,
   ) {}
 
   reset() {
@@ -51,6 +54,13 @@ export class AgentClient {
     if (!apiKey) throw new Error("Add your OpenRouter API key in settings first.");
     const model = this.getModel().trim();
     if (!model) throw new Error("Set an OpenRouter model name in settings first.");
-    return invoke<string>("agent_run", { apiKey, model, text });
+    // The planner and verifier models are optional; blank means "use the main one".
+    return invoke<string>("agent_run", {
+      apiKey,
+      model,
+      plannerModel: this.getPlannerModel().trim() || null,
+      verifierModel: this.getVerifierModel().trim() || null,
+      text,
+    });
   }
 }

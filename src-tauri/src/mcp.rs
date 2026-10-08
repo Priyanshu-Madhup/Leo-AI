@@ -153,6 +153,10 @@ impl Server {
 }
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    // Lets tests point at a real config folder (and its saved sign-in).
+    if let Some(dir) = std::env::var_os("LEO_CONFIG_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
     app.path().app_config_dir().map_err(|e| e.to_string())
 }
 
@@ -404,6 +408,11 @@ impl McpManager {
         }
     }
 
+    /// True once the named server has connected and its tools are known.
+    pub fn is_ready(&self, server: &str) -> bool {
+        self.servers.lock().unwrap().contains_key(server)
+    }
+
     pub fn owns(&self, full_name: &str) -> bool {
         self.lookup(full_name).is_some()
     }
@@ -483,7 +492,7 @@ pub async fn call_tool(app: &AppHandle, full_name: &str, args: &str) -> Result<S
     let text = open_sign_in_links(app, &text);
 
     if result["isError"].as_bool().unwrap_or(false) {
-        Err(text)
+        Err(friendly_api_error(&text).unwrap_or(text))
     } else {
         Ok(text)
     }
@@ -575,5 +584,41 @@ pub fn ensure_default_config(app: &AppHandle) {
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(text) = serde_json::to_string_pretty(&config) {
         let _ = std::fs::write(file, text);
+    }
+}
+
+/// Google answers a call to an API that is not switched on for the project
+/// with a long, technical 403. Turn it into one line that says what to do.
+fn friendly_api_error(text: &str) -> Option<String> {
+    if !text.contains("SERVICE_DISABLED") && !text.contains("has not been used in project") {
+        return None;
+    }
+    let url = regex::Regex::new(r"https://console\.(?:developers|cloud)\.google\.com/apis/api/[A-Za-z0-9._/?=&-]+")
+        .ok()?
+        .find(text)?
+        .as_str()
+        .trim_end_matches(['.', ',', '\'', '"'])
+        .to_string();
+    let title = regex::Regex::new(r"'serviceTitle': '([^']+)'")
+        .ok()
+        .and_then(|re| re.captures(text))
+        .map(|c| c[1].to_string())
+        .unwrap_or_else(|| "A Google API".to_string());
+    Some(format!(
+        "{title} is not switched on for Leo's Google project yet. Open {url}, click Enable, wait a minute or two, then try again."
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::friendly_api_error;
+
+    #[test]
+    fn explains_a_disabled_google_api() {
+        let raw = "Error calling tool 'search_contacts': API error: <HttpError 403 ... \"People API has not been used in project 825586925944 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/people.googleapis.com/overview?project=825586925944 then retry.\". Details: \"[{'reason': 'SERVICE_DISABLED', 'metadata': {'serviceTitle': 'People API', 'service': 'people.googleapis.com'}}]\">";
+        let msg = friendly_api_error(raw).expect("recognised");
+        assert!(msg.starts_with("People API is not switched on"));
+        assert!(msg.contains("https://console.developers.google.com/apis/api/people.googleapis.com/overview?project=825586925944"));
+        assert!(friendly_api_error("some other failure").is_none());
     }
 }

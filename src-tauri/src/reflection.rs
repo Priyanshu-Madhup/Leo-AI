@@ -62,7 +62,7 @@ pub async fn run(
             "messages": messages,
             "tools": tool_defs,
             "temperature": 0.2,
-            "max_tokens": 400,
+            "max_tokens": 2000,
         });
         let reply = match post_chat(&api_key, &body).await {
             Ok(r) => r,

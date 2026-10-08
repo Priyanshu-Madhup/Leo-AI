@@ -9,6 +9,8 @@ import { typewrite, type Typer } from "./typewriter";
 
 const STORAGE_KEY = "leo.openrouter.apiKey";
 const STORAGE_MODEL = "leo.openrouter.model";
+const STORAGE_PLANNER_MODEL = "leo.openrouter.plannerModel";
+const STORAGE_VERIFIER_MODEL = "leo.openrouter.verifierModel";
 const STORAGE_MEMORY_KEY = "leo.memorylake.apiKey";
 const STORAGE_SEARCH_KEY = "leo.tavily.key";
 const STORAGE_GOOGLE_EMAIL = "leo.google.email";
@@ -34,6 +36,8 @@ const settingsModal = document.querySelector<HTMLDivElement>("#settings")!;
 const settingsClose = document.querySelector<HTMLButtonElement>("#settings-close")!;
 const apiKeyInput = document.querySelector<HTMLInputElement>("#api-key")!;
 const modelInput = document.querySelector<HTMLInputElement>("#model-name")!;
+const plannerModelInput = document.querySelector<HTMLInputElement>("#planner-model")!;
+const verifierModelInput = document.querySelector<HTMLInputElement>("#verifier-model")!;
 const memoryKeyInput = document.querySelector<HTMLInputElement>("#memory-key")!;
 const searchKeyInput = document.querySelector<HTMLInputElement>("#search-key")!;
 const googleEmailInput = document.querySelector<HTMLInputElement>("#google-email")!;
@@ -58,7 +62,15 @@ function getModel(): string {
   return localStorage.getItem(STORAGE_MODEL) ?? "";
 }
 
-const llm = new AgentClient(getApiKey, getModel);
+function getPlannerModel(): string {
+  return localStorage.getItem(STORAGE_PLANNER_MODEL) ?? "";
+}
+
+function getVerifierModel(): string {
+  return localStorage.getItem(STORAGE_VERIFIER_MODEL) ?? "";
+}
+
+const llm = new AgentClient(getApiKey, getModel, getPlannerModel, getVerifierModel);
 
 // Memory and web search live in the Rust backend, which only offers those
 // tools to the model once it has a key. At startup an empty stored key is
@@ -477,6 +489,9 @@ function finishToolRow(row: HTMLDivElement, result: ToolResultEvent) {
 }
 
 void onAgentEvent(async (event) => {
+  // Progress events describe the plan's steps; they are for the debug timing
+  // run only. The chat shows tool rows, never the plan.
+  if (event.kind === "progress") return;
   if (event.kind === "ask_user") {
     showAskCard(event);
     return;
@@ -597,6 +612,8 @@ async function refreshStatus() {
 function fillSettings() {
   apiKeyInput.value = getApiKey();
   modelInput.value = getModel();
+  plannerModelInput.value = getPlannerModel();
+  verifierModelInput.value = getVerifierModel();
   memoryKeyInput.value = localStorage.getItem(STORAGE_MEMORY_KEY) ?? "";
   searchKeyInput.value = localStorage.getItem(STORAGE_SEARCH_KEY) ?? "";
   googleEmailInput.value = localStorage.getItem(STORAGE_GOOGLE_EMAIL) ?? "";
@@ -648,6 +665,8 @@ let savedTimer = 0;
 saveBtn.addEventListener("click", async () => {
   localStorage.setItem(STORAGE_KEY, apiKeyInput.value.trim());
   localStorage.setItem(STORAGE_MODEL, modelInput.value.trim());
+  localStorage.setItem(STORAGE_PLANNER_MODEL, plannerModelInput.value.trim());
+  localStorage.setItem(STORAGE_VERIFIER_MODEL, verifierModelInput.value.trim());
   localStorage.setItem(STORAGE_MEMORY_KEY, memoryKeyInput.value.trim());
   localStorage.setItem(STORAGE_SEARCH_KEY, searchKeyInput.value.trim());
   localStorage.setItem(STORAGE_GOOGLE_EMAIL, googleEmailInput.value.trim());
@@ -764,6 +783,10 @@ window.addEventListener("pointermove", (event) => {
 window.addEventListener("pointerup", () => {
   dragStart = null;
 });
+
+// Hovering over the orb makes it ripple, for as long as the pointer stays.
+canvas.addEventListener("pointerenter", () => orb.setHover(true));
+canvas.addEventListener("pointerleave", () => orb.setHover(false));
 
 canvas.addEventListener("click", () => {
   if (dragged) {

@@ -246,6 +246,21 @@ async fn ensure_public(url: &Url) -> Result<(), String> {
         return Err(local_error());
     }
 
+    // Pages inside the user's Google account need their sign-in; a plain web
+    // request just gets a 401. Say so, instead of leaving the agent guessing.
+    const GOOGLE_ACCOUNT_HOSTS: [&str; 7] = [
+        "docs.google.com",
+        "drive.google.com",
+        "mail.google.com",
+        "calendar.google.com",
+        "sheets.google.com",
+        "slides.google.com",
+        "contacts.google.com",
+    ];
+    if GOOGLE_ACCOUNT_HOSTS.contains(&host.as_str()) {
+        return Err("That is a page inside the user's Google account, which this tool cannot open (it is not signed in). Use the Google agent for Google documents, files and mail.".to_string());
+    }
+
     let port = url.port_or_known_default().unwrap_or(443);
     let addrs: Vec<IpAddr> = match host.parse::<IpAddr>() {
         Ok(ip) => vec![ip],
@@ -378,6 +393,8 @@ mod tests {
             assert!(ensure_public(&Url::parse("http://127.0.0.1/").unwrap()).await.is_err());
             assert!(ensure_public(&Url::parse("http://192.168.0.1/admin").unwrap()).await.is_err());
             assert!(ensure_public(&Url::parse("file:///c:/windows/win.ini").unwrap()).await.is_err());
+            let google = ensure_public(&Url::parse("https://docs.google.com/document/d/abc/edit").unwrap()).await;
+            assert!(google.unwrap_err().contains("Google account"));
         });
     }
 

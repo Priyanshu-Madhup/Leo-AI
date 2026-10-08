@@ -59,15 +59,23 @@ struct AskArgs {
     options: Vec<AskOption>,
 }
 
+/// Starts listening for the answer to card `id`. This must happen BEFORE the
+/// card is announced: if the answer could arrive first, it would find nobody
+/// waiting, be dropped, and the run would wait forever.
+fn register(app: &AppHandle, id: &str) -> oneshot::Receiver<Value> {
+    let (tx, rx) = oneshot::channel();
+    app.state::<InteractState>().pending.lock().unwrap().insert(id.to_string(), tx);
+    rx
+}
+
 async fn wait_for_answer(
     app: &AppHandle,
     id: &str,
+    mut rx: oneshot::Receiver<Value>,
     turn: &Arc<AtomicU64>,
     my_turn: u64,
 ) -> Result<Value, String> {
-    let (tx, mut rx) = oneshot::channel();
     let state = app.state::<InteractState>();
-    state.pending.lock().unwrap().insert(id.to_string(), tx);
 
     let deadline = Instant::now() + ANSWER_TIMEOUT;
     loop {
@@ -101,6 +109,7 @@ pub async fn ask_user(
     let options: Vec<AskOption> = args.options.into_iter().take(MAX_OPTIONS).collect();
 
     let id = format!("ask-{}", call.id);
+    let rx = register(app, &id);
     emit(
         app,
         AgentEvent::AskUser {
@@ -110,7 +119,7 @@ pub async fn ask_user(
         },
     );
 
-    let answer = wait_for_answer(app, &id, turn, my_turn).await?;
+    let answer = wait_for_answer(app, &id, rx, turn, my_turn).await?;
     let text = answer["text"].as_str().unwrap_or("").trim();
     if text.is_empty() {
         return Err("The user gave no answer.".to_string());
@@ -127,6 +136,7 @@ pub async fn approve(
 ) -> Result<Approval, String> {
     let id = format!("approve-{}", call.id);
     let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or(Value::Null);
+    let rx = register(app, &id);
     emit(
         app,
         AgentEvent::ApprovalRequest {
@@ -137,7 +147,7 @@ pub async fn approve(
         },
     );
 
-    let answer = wait_for_answer(app, &id, turn, my_turn).await?;
+    let answer = wait_for_answer(app, &id, rx, turn, my_turn).await?;
     if answer["allow"].as_bool().unwrap_or(false) {
         return Ok(Approval::Allowed);
     }
@@ -151,7 +161,12 @@ pub async fn approve(
 
 #[tauri::command]
 pub fn agent_answer(state: State<'_, InteractState>, id: String, payload: Value) {
-    if let Some(tx) = state.pending.lock().unwrap().remove(&id) {
+    answer(state.inner(), &id, payload);
+}
+
+/// Delivers the user's answer to whoever is waiting on card `id`.
+pub fn answer(state: &InteractState, id: &str, payload: Value) {
+    if let Some(tx) = state.pending.lock().unwrap().remove(id) {
         let _ = tx.send(payload);
     }
 }

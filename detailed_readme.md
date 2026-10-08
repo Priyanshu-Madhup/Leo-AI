@@ -71,7 +71,7 @@ Open the app → ⚙ (settings) in the top bar. A **Settings window** opens over
 
 | Section | Fields | Notes |
 |---|---|---|
-| AI model | OpenRouter API key (link: openrouter.ai/keys), Model name (link: models list filtered to tool support) | **Required.** The model must support **tool calling**. |
+| AI model | OpenRouter API key (link: openrouter.ai/keys), Model name (link: models list filtered to tool support), and under *Advanced* an optional Planner model and Checker model | **Key and model required.** The model must support **tool calling**. |
 | Long-term memory | MemoryLake API key (link: app.memorylake.ai) | Optional. The URL is **hardcoded** to `https://app.memorylake.ai` (no URL field). |
 | Web search | Tavily API key (link: app.tavily.com/home) | Optional. Without it `web_search` is not offered. |
 | Google | **Your Google account email** (stored as `leo.google.email`) | The Google tools act on the user's own account, so the backend needs their address (`mcp_set_inject`). The connection itself is configured in `mcp.json` (section 9); on a fresh install that file is written automatically (section 16). The Google Cloud app is published (In production), so any Google account can sign in. |
@@ -81,7 +81,7 @@ No base URLs are ever asked for; only API keys. The status chips (AI model, memo
 
 ### Local storage keys (frontend, per WebView)
 
-`leo.openrouter.apiKey`, `leo.openrouter.model`, `leo.memorylake.apiKey`, `leo.tavily.key`, `leo.google.email`, `leo.mode` ("full"/"widget"), `leo.blur` ("1"/"0"), `leo.transparency` (0–100).
+`leo.openrouter.apiKey`, `leo.openrouter.model`, `leo.openrouter.plannerModel`, `leo.openrouter.verifierModel`, `leo.memorylake.apiKey`, `leo.tavily.key`, `leo.google.email`, `leo.mode` ("full"/"widget"), `leo.blur` ("1"/"0"), `leo.transparency` (0–100).
 
 API keys live only in WebView local storage and in Rust memory at runtime. At startup the frontend pushes the MemoryLake and Tavily keys to Rust (`memory_configure`, `web_configure`) **only if non-empty**, so a reload can never switch them off; only an explicit Save can. The OpenRouter key and model are passed on every `agent_run` call.
 
@@ -102,43 +102,69 @@ API keys live only in WebView local storage and in Rust memory at runtime. At st
 └───────────────┬───────────────────────────────▲──────────────────────────┘
         invoke  │ commands                      │ events "agent://event"
 ┌───────────────▼───────────────────────────────┴──────────────────────────┐
-│ Rust                                                                      │
-│  agent.rs  conversation + tool loop ── openrouter.rs (HTTP, retries)      │
-│     │ uses                                                                │
-│  tools.rs (built-in tools, presentation)   interact.rs (cards: ask/approve)│
-│  mcp.rs (MCP stdio client)   memory.rs (MemoryLake)   web.rs (Tavily+page) │
-│  reflection.rs (after-reply memory pass)   lib.rs (window, modes, glass)   │
+│ Rust: the agents                                                          │
+│                                                                           │
+│   agent_run ─▶ Orchestrator ─┬─▶ Utility agent                            │
+│                (orchestrator.rs) │   replies, web, memory, time, open apps │
+│                              ├─▶ Google agent ─┬─ Gmail    Calendar        │
+│                              │                 ├─ Contacts Drive           │
+│                              │                 └─ Docs Sheets Slides       │
+│                              └─▶ Planner ── steps ──▶ Utility / Google     │
+│                                   (planner.rs)  ▲                          │
+│                                     edits plan  │ pass / fail              │
+│                                                 └── Verifier (verifier.rs) │
+│                                                                           │
+│   shared: tools.rs · interact.rs (cards) · memory.rs · web.rs · mcp.rs     │
 └───────────────────────────────────────────────────────────────────────────┘
         MCP servers (child processes over stdio):  Google Workspace
 ```
 
-**Design principle:** the Rust backend owns the agent, secrets-at-runtime, subprocesses and network calls. The frontend renders events and sends the user's answers.
+**Design principle:** the Rust backend owns the agents, secrets-at-runtime, subprocesses and network calls. The frontend renders events and sends the user's answers.
 
-### Current agent design vs. planned design
+### The agents (`agents.rs` is the registry)
 
-- **Built today:** a single **utility agent** — one tool-calling loop with all tools. Every request goes through it.
-- **Planned (not built):** *Orchestrator → Planner → specialist Executors → Verifier*. Single-step requests go straight to the utility agent; multi-step ones (where a step needs another step's output, e.g. weather needs the user's location first) go to a **Planner** that dispatches one step at a time to specialist agents; a **Verifier** checks each step against an expected output the planner provides for **that step only** before continuing. Web search stays owned by the utility agent: the planner would delegate a "search" step to it and hand the verified result to other agents as data. The full plan is in `C:\Users\Priyanshu Madhup\.claude\plans\let-s-plan-the-agentic-ethereal-whale.md`. The shared pieces (tool layer, approvals, question cards, memory) were built so those agents can reuse them.
+| Agent | Role | Own tools | May call |
+|---|---|---|---|
+| **Utility** | Simple replies, web search and page reading, memory, date/time, opening apps/sites | `current_datetime`, `web_search`, `fetch_page`, `open_url`, `open_app` | nobody |
+| **Google** | Coordinates all Google Workspace work; has **no Google tools itself** | – | the 7 sub-agents + utility |
+| **Gmail** | search/read mail, send email | 4 Gmail tools | utility |
+| **Calendar** | list calendars, read/create/change events | 3 | utility |
+| **Contacts** | look up and manage contacts | 4 | utility |
+| **Drive** | find/read/create/update files, share links, move to trash | 7 | utility |
+| **Docs** / **Sheets** / **Slides** | read, create, edit | 4 / 4 / 3 | utility |
+
+Every agent also has `ask_user`, `recall_memory` and `remember` (**the memory tool is available to all**). Calling another agent is a tool call named `ask_<agent>` (e.g. `ask_gmail`, `ask_utility`) that runs that agent's own loop and returns its answer. **There are no cycles by construction**: the utility agent calls nobody; sub-agents call only the utility agent; Google calls its sub-agents and utility; depth is also capped at 3. An agent is *offered* only its own tools and a call to anything else is refused (`AgentId::allows`). Unit tests in `agents.rs` enforce the hierarchy, the tool scoping and that each of the 29 Google tools has exactly one owner.
+
+### The roles that are not tool-using agents
+
+- **Orchestrator** (`orchestrator.rs`): one short model call classifies the latest request into a route: `utility` (answer or do it in one go), `google` (ONE clear Google job with everything needed in the message), or `plan` (several steps where a later step needs an earlier result, or services are combined; e.g. "email Priya the report", "what's the weather" which first needs the user's city from memory). If Google isn't connected it never routes there; if routing fails it chooses `plan`.
+- **Planner** (`planner.rs`): writes the raw plan (≤ 6 steps; each step = which agent, a self-contained task, and the `expected` result), runs the steps one at a time, and **edits the remaining steps** when needed (see §6). It can hand any step to the utility agent, which is how other agents get web data.
+- **Verifier** (`verifier.rs`): sees only ONE step: its task, its `expected` result, the agent's answer and a log of the tools that really ran. It never sees the rest of the plan. Returns `{pass, reason, replan}`. A verifier error never blocks a job (the step is accepted).
+
+### Models
+Everything uses the main model by default. Settings → AI model → *Advanced* has optional **Planner model** and **Checker model** fields (`leo.openrouter.plannerModel` / `verifierModel`); blank means "main". The router, final-answer writer and all agents use the main model.
 
 ---
 
 ## 6. Request lifecycle (one turn)
 
 1. **Input**: the user types in the composer (`sendMessage`). If a question/approval card is waiting, the text **answers the card** instead of starting a turn.
-2. Frontend adds the user bubble, shows the typing dots, sets the orb to *thinking*, calls **`agent_run(apiKey, model, text)`**.
-3. **`agent_run`** (agent.rs): bumps the turn counter (cancelling any older run), copies the stored history, appends the user message, runs **`run_loop`**.
-4. **`run_loop`**, up to **8 iterations**:
-   - builds the system prompt: base + memory section (if MemoryLake configured) + web section (if Tavily configured);
-   - builds the tool list: built-ins + MCP tools (web_search removed if no Tavily key; memory tools only if configured);
-   - calls OpenRouter (`post_chat`, with retries);
-   - if the reply has no tool calls → that text is the answer (an empty reply is nudged once, then replaced by a polite fallback);
-   - otherwise for each tool call: `ask_user` → question card; if the tool needs approval → approval card; else execute. Emits `tool_start` / `tool_result` events, appends the tool result (truncated to 8,000 chars) and loops.
-5. On success the working copy becomes the stored history (trimmed to the last 40 messages, always starting at a user message). A failed or superseded turn commits nothing.
-6. The reply returns to the frontend: shown as Markdown and **typed out** while the orb ripples to the rhythm of the text.
-7. **Memory pass** (reflection.rs) is spawned in the background (see §10).
+2. Frontend adds the user bubble, shows the typing dots, sets the orb to *thinking*, calls **`agent_run(apiKey, model, plannerModel, verifierModel, text)`**.
+3. **`agent_run`** bumps the turn counter (cancelling any older run), builds the shared `Ctx` (models, cancel flag, "tainted" flag, tool log, saved-facts list) and asks the **orchestrator** for a route.
+4. **Route `utility` / `google`**: that agent runs its loop on the conversation so far and its final text is the reply.
+5. **Route `plan`** (`planner::run_job`):
+   1. The planner writes the plan. If no usable plan comes back, the utility agent just handles the request.
+   2. For each step: the agent gets the overall request, the **verified results of earlier steps**, and its own task (never the later steps or the expected result).
+   3. The **verifier** checks that step. **Pass** → next step. **Fail** → retry up to 2 times with the verifier's reason as feedback, **unless the step already changed something** (an approved write), in which case it is not repeated.
+   4. If a step still fails, or the verifier flags `replan`, the planner **rewrites the remaining steps** from what actually happened (finished work is never redone). At most **2 plan edits** per request; then the job stops and the final reply says what was done and what wasn't.
+   5. A final model call writes the user-facing answer from the verified results.
+6. **Inside every agent loop** (`agent::run_agent`, ≤ 8 rounds): build prompt (role + memory section if MemoryLake is set + web section for the utility agent) → call OpenRouter (retries) → if the reply has no tool calls it is the answer (an empty reply is nudged once, then a polite fallback) → otherwise for each tool call: refuse it if the agent isn't allowed it; refuse **cut-off arguments before anything is shown** (§13); `ask_user` → question card; `ask_<agent>` → run that agent; otherwise approval card if needed, then execute, emit `tool_start`/`tool_result`, and feed the result back.
+7. The reply returns to the frontend: shown as Markdown and **typed out** while the orb ripples to the rhythm of the text. The conversation history stores only the user's messages and Leo's final replies (tool traffic stays inside the run).
+8. **Memory pass** (reflection.rs) runs in the background (see §10), told which facts were already saved.
 
-**Cancellation:** `agent_cancel` bumps the turn counter; the running loop notices at its next checkpoint (including while waiting on a card) and returns the error `"cancelled"`, which the frontend ignores. The frontend calls it when a new message is sent while one is still running.
+**Cancellation:** `agent_cancel` bumps the turn counter; every loop, the planner and card waits notice at their next checkpoint and return `"cancelled"`, which the frontend ignores. The frontend calls it when a new message is sent while one is running.
 
-**Conversation memory vs. long-term memory:** the in-process history (last 40 messages) is lost on restart or **New chat** / **Save**. Long-term facts live in MemoryLake.
+**Conversation memory vs. long-term memory:** the in-process history (last 40 messages) is lost on restart or **New chat**. Long-term facts live in MemoryLake.
 
 ---
 
@@ -149,7 +175,11 @@ API keys live only in WebView local storage and in Rust memory at runtime. At st
 | `lib.rs` | Tauri setup; command registration; window modes (`set_mode`), acrylic glass (`set_glass`, `set_blur`), transparent-window handling, **widget position persistence and clamping**; window-event hook that tracks the orb's position. |
 | `main.rs` | Calls `siri_orb_lib::run()`. |
 | `build.rs` | Tauri build + `rerun-if-env-changed` for the baked-in Google client (section 16). |
-| `agent.rs` | `AgentState` (history, turn counter), `agent_run/agent_cancel/agent_reset`, `run_loop`, system prompts (`SYSTEM_PROMPT`, `MEMORY_PROMPT`, `WEB_PROMPT`), `AgentEvent`, `tool_start()`. |
+| `agent.rs` | The engine: `Ctx` (per-request shared state), **`run_agent`** (the one tool loop all agents use), delegation, approval/argument checks, `agent_run/agent_cancel/agent_reset`, `AgentEvent`, `tool_start()`. |
+| `agents.rs` | The registry: `AgentId`, each agent's tools, who may call whom, delegation tool schemas, **all role prompts**. |
+| `orchestrator.rs` | Routing call (`utility` / `google` / `plan`). |
+| `planner.rs` | Plan creation, step running with retries, plan revision, final answer. |
+| `verifier.rs` | Step checking. |
 | `interact.rs` | `InteractState` (pending cards), `ask_user` and `approve`, `agent_answer` command. |
 | `tools.rs` | Built-in tool schemas and execution, `definitions()`, `present()` (plain-language title/detail/brand for UI), `is_side_effect`, `returns_untrusted_content`, Start-Menu app launcher. |
 | `mcp.rs` | Minimal MCP stdio client (JSON-RPC 2.0 over newline-delimited stdout/stdin), config loading, tool listing/calling, sign-in-link opener, `mcp_status`. |
@@ -164,7 +194,7 @@ API keys live only in WebView local storage and in Rust memory at runtime. At st
 
 | Command | Args | Purpose |
 |---|---|---|
-| `agent_run` | `apiKey, model, text` | Run one turn; returns the reply text. |
+| `agent_run` | `apiKey, model, plannerModel?, verifierModel?, text` | Run one request through the orchestrator; returns the reply text. |
 | `agent_cancel` | – | Cancel the running turn. |
 | `agent_reset` | – | Cancel and clear history (New chat). |
 | `agent_answer` | `id, payload` | Answer a card. Ask: `{text}`. Approval: `{allow, note?}`. |
@@ -216,7 +246,7 @@ Plus every MCP tool, named `<server>__<tool>` (e.g. `google__search_gmail_messag
 |---|---|
 | `main.ts` (~690 lines) | Everything UI. Sections in order: element lookups, keys/transparency/blur → orb state → **window mode** (`setMode`) → **chat transcript** (`addMessage`, typing dots, `followEnd`) → **question/approval cards** → **tool progress rows** (logos) → **settings window** (`openSettings`, `refreshStatus`, Save) → **sending** (`sendMessage`) → **dragging the minimised orb** → start-up. |
 | `agent.ts` | `AgentClient` (`ask`, `cancel`, `reset`), event types, `answerCard`, `onAgentEvent`. |
-| `orb.ts` | `SiriOrb`: WebGL raymarched chrome sphere. States `idle | thinking | speaking` (speaking = the reply is being written out); each has tones, speed, glow and **ripple** strength. Smooth, frame-rate-independent easing; travelling ripple waves (strongest while generating), gentle breathing when idle. `setState`, `setLevel(0..1)`. |
+| `orb.ts` | `SiriOrb`: WebGL raymarched chrome sphere. States `idle | thinking | speaking` (speaking = the reply is being written out); each has tones, speed, glow and **ripple** strength. Smooth, frame-rate-independent easing; travelling ripple waves (strongest while generating), gentle breathing when idle. `setHover(true)` (the canvas `pointerenter`/`pointerleave`) lifts ripple, pace and glow to a lively level for as long as the pointer is over the orb. `setState`, `setLevel(0..1)`. |
 | `markdown.ts` | Safe Markdown renderer (builds DOM nodes, never `innerHTML`; only http(s) links). |
 | `typewriter.ts` | `typewrite(el, onTick, onDone)`: reveals a rendered message character by character (~120 chars/s, speeds up so long replies finish in ≤3.5 s, eases in, short sentence pauses, blinking caret, blocks fade in). Respects reduced-motion. |
 | `styles.css` | All styling. CSS variables: `--ink`, `--glass` (set live by the transparency slider), `--tint`, `--metal`, etc. |
@@ -309,6 +339,10 @@ The Rust side decides the keys (`Brand { keys[], icon }` in `tools::present`); t
 
 ## 13. Reliability notes
 
+- **"Thinking" models and short calls**: models like `qwen/qwen3.7-flash` spend a small token budget entirely on hidden reasoning and return an empty answer, which made routing and planning fail ("the model did not return JSON") and requests hang on "Thinking". The short structured calls (routing, planning, checking, the final write-up) now go through `openrouter::quick_chat`: first with `"reasoning": {"enabled": false}`, and if the answer is empty or the model refuses that setting, again with a 4x larger budget. If planning still fails, the whole request goes to the Google agent when Google is connected (it can also reach the utility agent), otherwise to the utility agent.
+
+- **Cut-off tool calls**: a long tool call (e.g. a whole document) used to be truncated by the 1,024-token reply limit, producing broken JSON ("Bad arguments") that still reached the approval card and was retried. Now agent replies get **4,096 tokens**, and every tool call's arguments are validated **before** any approval card; a cut-off call is rejected with an instruction to send less per call (the Docs agent is told to write long documents in parts of ≤ ~1,500 words). See `agent::arguments_are_valid`.
+
 - `post_chat` retries up to 3 times on 429/5xx (also when a 200 body carries an error code), honouring `Retry-After` (max 8 s). The limit is usually the model **provider's shared capacity**, not the OpenRouter account. If a cheap model keeps rate-limiting, choose another model.
 - Empty model replies: nudged once, then a fallback message ("I couldn't work out how to do that with the tools I have.").
 - Failed tool rows show the error text; tool failures are returned to the model so it can recover.
@@ -316,13 +350,18 @@ The Rust side decides the keys (`Brand { keys[], icon }` in `tools::present`); t
 
 ---
 
+### Timing / end-to-end run (debug builds only)
+`src-tauri/src/e2e.rs` is a headless mode of the app, compiled only in debug builds. With `LEO_E2E_REQUEST` set, the app starts with no UI, runs that one request through the real pipeline (real Google connection and sign-in, auto-answering every question/approval card) and prints a timestamped timeline (`LEO_TRACE=1` adds every model call with its duration), then exits. **It performs real actions** (e.g. it really sends the email), so use it deliberately: `cd src-tauri` then `LEO_E2E_REQUEST="..." LEO_E2E_EMAIL=you@gmail.com OPENROUTER_KEY=... OPENROUTER_MODEL=... LEO_TRACE=1 cargo run` (add `CARGO_TARGET_DIR=...` to avoid clashing with a running dev app). Reference timing for "mail myself a hello note" with `qwen/qwen3.7-flash`: about 27 s (route 2 s, plan 1 s, 3 contact lookups 7 s, send 3 s, check + final answer 6 s).
+
+---
+
 ## 14. Status
 
-**Built and working**: orb + full/widget modes (drag, remembered position), glass window with blur and a transparency slider, a Settings window with key links and status, text chat with Markdown + typewriter, utility agent with tool loop, question/approval cards, MCP client + Google Workspace (Gmail, Calendar, Drive, Docs, Sheets, Slides, Contacts), MemoryLake memory with after-reply memory pass, Tavily web search + safe page reader, brand-logo rows, retries.
+**Built and working**: orb + full/widget modes (drag, remembered position), glass window with blur and a transparency slider, a Settings window with key links and status, text chat with Markdown + typewriter, the multi-agent system (orchestrator, planner, verifier, utility agent, Google agent with 7 sub-agents), question/approval cards, MCP client + Google Workspace (Gmail, Calendar, Drive, Docs, Sheets, Slides, Contacts), MemoryLake memory with after-reply memory pass, Tavily web search + safe page reader, brand-logo rows, retries.
 
-**Not built yet** (see the plan file): Planner / specialist Executors / Verifier; "always allow" for approvals; browser-control and filesystem MCP servers; streaming replies; a settings UI for MCP servers (config is a file); a forget-memory tool; Google tokens refresh handling beyond the 7-day Testing-mode limit.
+**Not built yet**: "always allow" for approvals; browser-control and filesystem MCP servers; streaming replies; a settings UI for MCP servers (config is a file); a forget-memory tool; Google tokens refresh handling beyond the 7-day Testing-mode limit.
 
-**Known limits**: personal-account Google hosted MCP not usable; Drive cannot permanently delete; web search needs a Tavily key; blur may stutter when dragging on some Windows builds; logo files must be named as in §11; the `README.md` file is a stale template.
+**Known limits**: personal-account Google hosted MCP not usable; Drive cannot permanently delete; web search needs a Tavily key; blur may stutter when dragging on some Windows builds; logo files must be named as in §11.
 
 ---
 

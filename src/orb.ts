@@ -156,6 +156,7 @@ export class SiriOrb {
   private time = 0;
   private wave = 0;
   private lastFrame = 0;
+  private hover = false;
   private state: OrbState = "idle";
   private level = 0;
   private smoothLevel = 0;
@@ -215,6 +216,11 @@ export class SiriOrb {
     this.state = state;
   }
 
+  /** While the pointer is over the orb it ripples at full strength. */
+  setHover(hover: boolean) {
+    this.hover = hover;
+  }
+
   setLevel(level: number) {
     this.level = Math.min(1, Math.max(0, level));
   }
@@ -248,7 +254,17 @@ export class SiriOrb {
 
   private draw(dt: number) {
     const gl = this.gl!;
-    const target = STATE_STYLE[this.state];
+    const base = STATE_STYLE[this.state];
+    // Hovering lifts the ripple, pace and glow to at least a lively level;
+    // the usual per-second easing below makes it swell in and fade out.
+    const target: StateStyle = this.hover
+      ? {
+          ...base,
+          ripple: Math.max(base.ripple, 1.0),
+          baseSpeed: Math.max(base.baseSpeed, 1.3),
+          glow: Math.max(base.glow, 0.65),
+        }
+      : base;
 
     // Ease every visual property toward its target. The rates are per second,
     // not per frame, so the motion is equally smooth at any frame rate.

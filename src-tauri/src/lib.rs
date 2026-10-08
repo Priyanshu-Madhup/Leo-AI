@@ -5,15 +5,22 @@ use std::sync::Mutex;
 use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewWindow, WindowEvent};
 
 mod agent;
+mod agents;
 mod interact;
 mod mcp;
 mod memory;
 mod openrouter;
+mod orchestrator;
+mod planner;
 mod reflection;
 mod tools;
 mod types;
 mod updater;
+mod verifier;
 mod web;
+
+#[cfg(debug_assertions)]
+mod e2e;
 
 fn position_top_right_inner(window: &WebviewWindow) -> tauri::Result<()> {
     let monitor = window
@@ -219,6 +226,12 @@ pub fn run() {
             set_blur
         ])
         .setup(|app| {
+            // Debug builds only: a headless timing run, switched on by env vars.
+            #[cfg(debug_assertions)]
+            if e2e::active() {
+                e2e::run(app.handle());
+                return Ok(());
+            }
             let window = app
                 .get_webview_window("main")
                 .expect("main window must exist");
