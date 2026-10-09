@@ -536,11 +536,73 @@ pub fn mcp_set_inject(manager: tauri::State<'_, McpManager>, key: String, value:
     }
 }
 
+/// The Google tools Leo offers. Kept in step with the agents in agents.rs.
+const DEFAULT_GOOGLE_TOOLS: &[&str] = &[
+    "search_gmail_messages",
+    "get_gmail_message_content",
+    "get_gmail_messages_content_batch",
+    "send_gmail_message",
+    "list_calendars",
+    "get_events",
+    "manage_event",
+    "list_contacts",
+    "get_contact",
+    "search_contacts",
+    "manage_contact",
+    "search_drive_files",
+    "get_drive_file_content",
+    "get_drive_file_download_url",
+    "get_drive_shareable_link",
+    "create_drive_folder",
+    "create_drive_file",
+    "update_drive_file",
+    "get_doc_content",
+    "create_doc",
+    "modify_doc_text",
+    "import_to_google_doc",
+    "update_paragraph_style",
+    "insert_doc_elements",
+    "read_sheet_values",
+    "modify_sheet_values",
+    "create_spreadsheet",
+    "import_to_google_sheets",
+    "format_sheet_range",
+    "get_spreadsheet_info",
+    "get_presentation",
+    "create_presentation",
+    "import_to_google_slides",
+    "batch_update_presentation",
+];
+
+/// An `mcp.json` written by an older version lacks the Google tools added
+/// since (it is never overwritten). Adds any that are missing to the Google
+/// server's allow-list so every install gets them after an update.
+fn add_missing_tools(file: &std::path::Path) {
+    let Ok(text) = std::fs::read_to_string(file) else { return };
+    let Ok(mut config) = serde_json::from_str::<Value>(&text) else { return };
+    let Some(allow) = config["servers"]["google"]["tools_allow"].as_array_mut() else { return };
+    let mut changed = false;
+    for tool in DEFAULT_GOOGLE_TOOLS {
+        if !allow.iter().any(|t| t.as_str() == Some(tool)) {
+            allow.push(json!(tool));
+            changed = true;
+        }
+    }
+    if changed {
+        if let Ok(updated) = serde_json::to_string_pretty(&config) {
+            let _ = std::fs::write(file, updated);
+        }
+    }
+}
+
 /// On a fresh install there is no `mcp.json` yet. If this build carries a
 /// Google sign-in client (baked in by the release workflow), write a ready-made
 /// config for the Google connection; the user then only types their email in
 /// Settings. An existing file is never touched.
 pub fn ensure_default_config(app: &AppHandle) {
+    if let Ok(dir) = config_dir(app) {
+        add_missing_tools(&dir.join("mcp.json"));
+    }
     let (Some(id), Some(secret)) = (option_env!("LEO_GOOGLE_CLIENT_ID"), option_env!("LEO_GOOGLE_CLIENT_SECRET"))
     else {
         return;
@@ -568,17 +630,7 @@ pub fn ensure_default_config(app: &AppHandle) {
                 "OAUTHLIB_INSECURE_TRANSPORT": "1"
             },
             "inject": { "user_google_email": "" },
-            "tools_allow": [
-                "search_gmail_messages", "get_gmail_message_content", "get_gmail_messages_content_batch", "send_gmail_message",
-                "list_calendars", "get_events", "manage_event",
-                "list_contacts", "get_contact", "search_contacts", "manage_contact",
-                "search_drive_files", "get_drive_file_content", "get_drive_file_download_url", "get_drive_shareable_link",
-                "create_drive_folder", "create_drive_file", "update_drive_file",
-                "get_doc_content", "create_doc", "modify_doc_text", "import_to_google_doc", "update_paragraph_style", "insert_doc_elements",
-                "read_sheet_values", "modify_sheet_values", "create_spreadsheet", "import_to_google_sheets",
-                "format_sheet_range", "get_spreadsheet_info",
-                "get_presentation", "create_presentation", "import_to_google_slides", "batch_update_presentation"
-            ],
+            "tools_allow": DEFAULT_GOOGLE_TOOLS,
             "enabled": true
         } }
     });
@@ -612,6 +664,29 @@ fn friendly_api_error(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn old_config_gets_the_newer_google_tools() {
+        let dir = std::env::temp_dir().join(format!("leo-mcp-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("mcp.json");
+        std::fs::write(&file, r#"{"servers":{"google":{"command":"uvx","tools_allow":["create_doc","my_custom_tool"]}}}"#).unwrap();
+        add_missing_tools(&file);
+        let config: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let allow: Vec<&str> = config["servers"]["google"]["tools_allow"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t.as_str())
+            .collect();
+        assert!(allow.contains(&"import_to_google_doc"));
+        assert!(allow.contains(&"update_paragraph_style"));
+        assert!(allow.contains(&"my_custom_tool"));
+        assert_eq!(allow.iter().filter(|t| **t == "create_doc").count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::friendly_api_error;
 
     #[test]
