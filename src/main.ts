@@ -17,6 +17,7 @@ const STORAGE_MEMORY_KEY = "leo.memorylake.apiKey";
 const STORAGE_SEARCH_KEY = "leo.tavily.key";
 const STORAGE_GOOGLE_EMAIL = "leo.google.email";
 const STORAGE_MODE = "leo.mode";
+const STORAGE_SETUP = "leo.setupShown";
 const STORAGE_BLUR = "leo.blur";
 const STORAGE_SHORTCUT = "leo.shortcut";
 const STORAGE_TRANSPARENCY = "leo.transparency";
@@ -138,7 +139,7 @@ function startIntro() {
   }, INTRO_MS + 100);
 }
 
-function startUpdateWarp() {
+function startUpdateWarp(title = "Updating Leo") {
   if (warping) return;
   warping = true;
   spaceRun?.stop();
@@ -149,7 +150,8 @@ function startUpdateWarp() {
   showCaption("");
   document.body.classList.add("warping");
   setState("thinking");
-  statusText.textContent = "Updating Leo…";
+  statusText.textContent = `${title}…`;
+  document.querySelector<HTMLElement>("#space-title")!.textContent = title;
   orb.setHover(true);
   spaceRun = playWarp(spaceCanvas, UPDATE_ANIMATION_MS, {
     onProgress(p) {
@@ -172,7 +174,7 @@ function endUpdateWarp() {
   });
 }
 
-void listen<string>("app://updating", startUpdateWarp);
+void listen<string>("app://updating", () => startUpdateWarp());
 void listen("app://update-failed", endUpdateWarp);
 
 // Development only: Ctrl+Shift+U previews the update flight and then the launch.
@@ -1040,11 +1042,23 @@ canvas.addEventListener("click", () => {
 
 // ---------- start ----------
 setState("idle");
-startIntro();
 void invoke("set_mode", { mode });
+
+// A new install always gets the space flight once (as "Setting up Leo"), so
+// the first thing seen is the same screen an update shows. The flag is stored
+// at once, so a crash during it cannot repeat it forever.
+let lead = 0;
+if (!localStorage.getItem(STORAGE_SETUP)) {
+  localStorage.setItem(STORAGE_SETUP, "1");
+  startUpdateWarp("Setting up Leo");
+  window.setTimeout(endUpdateWarp, UPDATE_ANIMATION_MS + 300);
+  lead = UPDATE_ANIMATION_MS + 600;
+} else {
+  startIntro();
+}
 if (!getApiKey() || !getModel()) {
   // First run: once the orb has arrived, open the chat window for the welcome.
   window.setTimeout(() => {
     void setMode("full").then(() => openSettings("Welcome! Add your OpenRouter key and a model to get started."));
-  }, INTRO_MS);
+  }, lead + INTRO_MS);
 }
