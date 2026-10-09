@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Position, Size, WebviewWindow, WindowEvent};
 
 mod agent;
 mod agents;
@@ -186,6 +186,59 @@ fn apply_mode(window: &WebviewWindow, mode: &str) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Where the minimised orb's window goes: where it was last left (kept on a
+/// screen that still exists), or the top-right corner.
+fn widget_target(window: &WebviewWindow, saved: Option<(i32, i32)>) -> tauri::Result<(i32, i32)> {
+    if let Some((x, y)) = saved {
+        return clamp_to_screen(window, x, y);
+    }
+    let monitor = window
+        .current_monitor()?
+        .or(window.primary_monitor()?)
+        .ok_or_else(|| tauri::Error::WindowNotFound)?;
+    let scale = monitor.scale_factor();
+    let width = (WIDGET_SIZE.0 * scale).round() as i32;
+    let p = monitor.position();
+    Ok((p.x + monitor.size().width as i32 - width, p.y + (34.0 * scale).round() as i32))
+}
+
+/// Shrinks the chat window into the orb widget in one smooth motion: the
+/// window's rectangle glides from its current size and place to the widget's,
+/// then the widget settings (no glass, no taskbar entry) are applied.
+async fn glide_to_widget(window: WebviewWindow) -> tauri::Result<()> {
+    const STEPS: u32 = 24;
+    const FRAME: std::time::Duration = std::time::Duration::from_millis(13);
+    let ease = |t: f64| if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 };
+    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+
+    // Read before anything moves, so the glide cannot overwrite the saved spot.
+    let saved = widget_pos(window.app_handle());
+    let scale = window.scale_factor()?;
+    let from_pos = window.outer_position()?;
+    let from_size = window.outer_size()?;
+    let (to_x, to_y) = widget_target(&window, saved)?;
+    let (to_w, to_h) = ((WIDGET_SIZE.0 * scale).round(), (WIDGET_SIZE.1 * scale).round());
+
+    for i in 1..=STEPS {
+        let e = ease(i as f64 / STEPS as f64);
+        let size = PhysicalSize {
+            width: lerp(from_size.width as f64, to_w, e).round() as u32,
+            height: lerp(from_size.height as f64, to_h, e).round() as u32,
+        };
+        let pos = PhysicalPosition {
+            x: lerp(from_pos.x as f64, to_x as f64, e).round() as i32,
+            y: lerp(from_pos.y as f64, to_y as f64, e).round() as i32,
+        };
+        window.set_size(Size::Physical(size))?;
+        window.set_position(Position::Physical(pos))?;
+        tokio::time::sleep(FRAME).await;
+    }
+
+    window.set_skip_taskbar(true)?;
+    set_glass(&window, false);
+    place_widget(&window, saved)
+}
+
 #[tauri::command]
 fn set_blur(window: WebviewWindow, enabled: bool) {
     BLUR_ENABLED.store(enabled, Ordering::SeqCst);
@@ -195,10 +248,13 @@ fn set_blur(window: WebviewWindow, enabled: bool) {
 }
 
 #[tauri::command]
-fn set_mode(window: WebviewWindow, mode: String) -> Result<(), String> {
+async fn set_mode(window: WebviewWindow, mode: String, animate: Option<bool>) -> Result<(), String> {
     // Routed through Rust rather than the JS setSize() API: with
     // decorations disabled (as this window has), Window.setSize() from the
     // frontend is known to silently no-op on some Tauri/Windows builds.
+    if mode == "widget" && animate == Some(true) && FULL_VIEW.load(Ordering::SeqCst) {
+        return glide_to_widget(window).await.map_err(|e| e.to_string());
+    }
     apply_mode(&window, &mode).map_err(|e| e.to_string())
 }
 

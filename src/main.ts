@@ -232,7 +232,17 @@ type Mode = "full" | "widget";
 let mode: Mode = "widget";
 document.body.dataset.mode = mode;
 
+const MINIMIZE_FADE_MS = 200;
+
 async function setMode(next: Mode) {
+  // Minimising: the chat fades away first, then the window glides down to the
+  // orb (Rust animates the window rectangle).
+  const minimizing = next === "widget" && mode === "full" && !warping;
+  if (minimizing) {
+    document.body.classList.add("minimizing");
+    closeSettings();
+    await new Promise((resolve) => window.setTimeout(resolve, MINIMIZE_FADE_MS));
+  }
   // Opening the chat from the orb always plays the rise-up animation. It
   // starts invisible, so the window resizing underneath is not seen.
   const opening = next === "full" && mode === "widget" && !warping;
@@ -242,7 +252,11 @@ async function setMode(next: Mode) {
   if (opening) startIntro();
   if (next === "widget") closeSettings();
   showCaption("");
-  await invoke("set_mode", { mode: next });
+  try {
+    await invoke("set_mode", { mode: next, animate: minimizing });
+  } finally {
+    document.body.classList.remove("minimizing");
+  }
 }
 
 // ---------- chat transcript ----------

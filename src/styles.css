@@ -1057,3 +1057,11 @@ body.warping #space-text { display: flex; animation: ui-in 0.8s ease 0.4s both; 
 
 .outline-btn:hover:not(:disabled) { border-color: rgba(255, 255, 255, 0.4); }
 .outline-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* Minimising: the chat and top bar fade out before the window shrinks. */
+body.minimizing #chat,
+body.minimizing #topbar {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
