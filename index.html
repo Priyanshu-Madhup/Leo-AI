@@ -10,6 +10,14 @@
   <body data-mode="full">
     <div id="drag-strip" data-tauri-drag-region></div>
 
+    <!-- Launch and update animations (see space.ts). -->
+    <canvas id="space" aria-hidden="true"></canvas>
+    <div id="space-text" aria-live="polite">
+      <div id="space-title">Updating Leo</div>
+      <div id="space-line">Preparing for launch</div>
+      <div id="space-bar"><i></i></div>
+    </div>
+
     <div id="widget" data-state="idle">
       <header id="topbar" data-tauri-drag-region>
         <span id="status" data-tauri-drag-region>

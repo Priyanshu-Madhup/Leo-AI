@@ -574,9 +574,10 @@ pub fn ensure_default_config(app: &AppHandle) {
                 "list_contacts", "get_contact", "search_contacts", "manage_contact",
                 "search_drive_files", "get_drive_file_content", "get_drive_file_download_url", "get_drive_shareable_link",
                 "create_drive_folder", "create_drive_file", "update_drive_file",
-                "get_doc_content", "create_doc", "modify_doc_text", "import_to_google_doc",
+                "get_doc_content", "create_doc", "modify_doc_text", "import_to_google_doc", "update_paragraph_style", "insert_doc_elements",
                 "read_sheet_values", "modify_sheet_values", "create_spreadsheet", "import_to_google_sheets",
-                "get_presentation", "create_presentation", "import_to_google_slides"
+                "format_sheet_range", "get_spreadsheet_info",
+                "get_presentation", "create_presentation", "import_to_google_slides", "batch_update_presentation"
             ],
             "enabled": true
         } }

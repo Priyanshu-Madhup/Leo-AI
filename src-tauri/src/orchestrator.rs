@@ -24,10 +24,10 @@ pub enum Route {
 }
 
 const ROUTER_PROMPT: &str = "You route requests for a personal assistant. Reply with only JSON: {\"route\": \"utility\" | \"google\" | \"plan\"}.\n\
-- utility: it can be answered or done in one go with general knowledge, writing, a web search or page read, the user's memory, the date/time, or opening an app or site. Chat, advice, explanations, simple lookups.\n\
+- utility: it can be answered or done in one go with general knowledge, writing, a single web search or page read, the user's memory, the date/time, or opening an app or site. Chat, advice, explanations, and lookups with a clear answer that one search settles (\"who won the match last night\", \"what is the capital of Peru\").\n\
 - google: a job that stays INSIDE the user's Google account (Gmail, Calendar, Contacts, Drive, Docs, Sheets, Slides), even if it takes several steps (find a file, read it, change it, save it), as long as the message says what to do. Examples: \"show my unread email\", \"what is on my calendar tomorrow\", \"edit my Festivals doc and make it more professional\", \"add a Total row to my budget sheet\".\n\
-- plan: the job needs the web or the user's memory together with something else, or a later step needs information that has to be found first, or several different services are combined. Examples: \"email Priya the report\" (find her address, then send), \"what's the weather\" (needs the user's location from memory first), \"put the top 3 news stories in a new Google Doc\" (search, then create the doc).\n\
-When unsure between utility and plan, choose plan. Judge the LATEST request, using the earlier messages only for context.";
+- plan: open-ended, broad, vague or time-sensitive research where the first move is to find out what is actually going on (\"latest news on X\", \"what is happening with Y\", a topic with several angles), so the plan can look first and then adjust; or a later step needs a fact an earlier step has to find; or something must be changed or sent after research; or several services are combined. Examples: \"email Priya the report\" (find her address, then send), \"what's the weather\" (needs the user's location from memory first), \"put the top 3 news stories in a new Google Doc\" (search, then create the doc).\n\
+A question that one search can settle is utility. Broad, vague or news-style research is plan. Judge the LATEST request, using the earlier messages only for context.";
 
 pub async fn route(ctx: &Ctx, messages: &[ChatMessage]) -> Result<Route, String> {
     ctx.check()?;

@@ -403,3 +403,16 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 - Windows only (x64). SmartScreen may warn on the first run because the installer is not code-signed with a purchased certificate; users click "More info -> Run anyway".
 - The Google app being "In production" but **unverified** means the "Google hasn't verified this app" screen and a ~100-user cap until verification.
 - `tauri dev` never self-updates and never reads the bundled uv.
+
+---
+
+## 17. Additions since 2.1.0 (summary)
+
+- **Global shortcut** (Settings → Shortcut): `set_shortcut` registers one system-wide key combination (stored as `leo.shortcut`). Pressing it shows Leo and toggles between the orb widget and the full chat (event `shortcut://pressed`).
+- **Streaming**: `openrouter::post_chat_stream` reads the SSE stream; for `utility`/`google` routes `run_agent` emits `delta` events (and `delta_reset` if the model then calls a tool) and the frontend draws the reply live. Plan jobs are not streamed.
+- **Prompt caching**: `openrouter::cache_system_prompt` marks system prompts `cache_control: ephemeral` (Qwen needs this). `LEO_TRACE=1` prints cached tokens.
+- **Chat summary** (`summary.rs`): from 10 messages on, older turns are folded into a rolling summary (≤1000 words); the model sees summary + last exchange + new message. Cleared by New chat.
+- **Steps summary** (per request, `Ctx.steps_summary`): the tool calls already made, handed to each plan step so work is not repeated. Separate from the chat summary. Today's date is in every agent's prompt.
+- **Planner**: broad/vague/time-sensitive research starts with a `scout` step; the plan is always reviewed after it. Utility research steps are not retried. Hard limits per request: 5 web searches, 4 page reads. Tavily search uses `advanced` depth.
+- **Formatting**: Docs are created from Markdown through `import_to_google_doc`; `update_paragraph_style`, `insert_doc_elements`, `format_sheet_range`, `get_spreadsheet_info` and `batch_update_presentation` are exposed (34 Google tools). Existing `mcp.json` files must list the new tools (or be deleted to regenerate).
+- **Animations** (`space.ts`): on a normal launch the orb just floats up from the bottom (CSS only, no stars); the starfield is only for updates: during an update a 15-second flight through space plays (the updater waits that long before installing, then the app restarts into the new version). A minimised widget opens to the full window first. Dev preview: Ctrl+Shift+U.

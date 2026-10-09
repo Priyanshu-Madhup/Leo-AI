@@ -915,3 +915,121 @@ body[data-mode="widget"] #orb { cursor: grab; }
 .advanced summary::before { content: "+"; display: inline-block; width: 14px; }
 .advanced[open] summary::before { content: "\2212"; }
 .advanced summary:hover { color: var(--ink); }
+
+/* ---------- launch and update animations ---------- */
+#space {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  pointer-events: none;
+  z-index: 1;
+}
+
+body.warping #space { display: block; z-index: 3; pointer-events: auto; }
+
+/* Launch: the orb floats up from the bottom of the window to its place, the
+   rest of the interface fades in once it has arrived. */
+body.intro #orb-wrap {
+  animation: orb-rise 2.1s cubic-bezier(0.16, 0.84, 0.3, 1) both;
+}
+
+@keyframes orb-rise {
+  0% {
+    transform: translateY(calc(100vh - 20px - var(--orb-d) / 2)) scale(0.5);
+    opacity: 0;
+    filter: blur(8px);
+  }
+  14% { opacity: 1; filter: blur(2px); }
+  100% { transform: translateY(0) scale(1); opacity: 1; filter: blur(0); }
+}
+
+body.intro #topbar,
+body.intro #chat {
+  animation: ui-in 0.9s ease 1.25s both;
+}
+
+@keyframes ui-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Update: the chat steps aside, the orb moves to the middle of the view and
+   shudders a little at full speed while the stars rush past. */
+body.warping #chat {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+
+body[data-mode="full"].warping,
+body[data-mode="full"].warping.has-messages { --orb-d: 200px; }
+
+body.warping #orb-wrap { z-index: 4; }
+
+body[data-mode="full"].warping #orb-wrap {
+  top: calc(50% - var(--orb-d) / 2 - 56px);
+  margin-top: 0;
+  transition: top 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+body.warping #orb { animation: orb-tremor 0.16s linear infinite; pointer-events: none; }
+
+@keyframes orb-tremor {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(1.2px, -0.8px); }
+  50% { transform: translate(-0.8px, 1.2px); }
+  75% { transform: translate(-1.2px, -0.6px); }
+  100% { transform: translate(0, 0); }
+}
+
+#space-text {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 54px;
+  z-index: 5;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  pointer-events: none;
+}
+
+body.warping #space-text { display: flex; animation: ui-in 0.8s ease 0.4s both; }
+
+#space-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+#space-line { font-size: 12px; color: var(--ink-dim); min-height: 1.4em; }
+
+#space-bar {
+  width: 170px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+#space-bar i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, #8d929b, #f6f7f9);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.intro #orb-wrap,
+  body.intro #topbar,
+  body.intro #chat { animation: none; }
+  body.warping #orb { animation: none; }
+}

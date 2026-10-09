@@ -38,6 +38,9 @@ struct Step {
     agent: AgentId,
     task: String,
     expected: String,
+    /// A look-around step: after it passes, the planner always reviews the
+    /// rest of the plan against what it found.
+    scout: bool,
 }
 
 struct Done {
@@ -57,7 +60,7 @@ const AGENTS_TEXT: &str = "- utility: the general assistant. Web search and read
 const GOOGLE_RULES: &str = "- Anything inside the user's Google account (a document, spreadsheet, slide deck, Drive file, email, event or contact) can ONLY be read or changed by the google agent. The utility agent cannot open them: a web address for a Google document does not work for it.\n\
 - Never split one job that a single agent can do from start to finish (for example: read a document and rewrite it) into several steps. Results passed between steps are shortened, so a whole document cannot be carried from one step to the next. Put the whole job in one step.\n";
 
-const FORMAT_TEXT: &str = "Reply with only JSON: {\"steps\":[{\"agent\":\"utility\"|\"google\",\"task\":\"...\",\"expected\":\"...\"}]}";
+const FORMAT_TEXT: &str = "Reply with only JSON: {\"steps\":[{\"agent\":\"utility\"|\"google\",\"task\":\"...\",\"expected\":\"...\",\"scout\":true|false}]}";
 
 fn plan_prompt(google_ready: bool) -> String {
     let availability = if google_ready {
@@ -71,6 +74,9 @@ Rules:\n\
 - Each step's `task` must stand on its own: say exactly what to do and what to return. Results of earlier steps are passed to later steps separately, so never write \"the previous result\"; just say what is needed.\n\
 - `expected` states what that step's result must contain for the step to count as done (the concrete facts, ids, links, or a confirmation). Be specific.\n\
 {GOOGLE_RULES}\
+- Open-ended, broad, vague or time-sensitive research (\"latest news on X\", \"what is happening with Y\"): start with ONE scouting step (set \"scout\": true) for the utility agent. Its task: use today\'s date (it is in your instructions) so everything is about the right period, then run ONE carefully designed web search that shows what is actually going on, and report the key findings and the main angles worth following. After it, the plan is reviewed against what it found, so add at most one or two follow-up steps for the likeliest next moves (a deeper search on the main angle, or reading the best page); if the scout will already answer the request, plan no follow-ups. Set \"scout\" to false for every other step.\n\
+- Never plan more than one search per step, and never repeat a search with reworded queries.\n\
+- Write `expected` loosely for research: \"a short summary of what was found, with sources\". Never demand specific facts the web may not have; say what could not be found instead.\n\
 - Keep any action that changes something (sending an email, creating a document, changing an event) as its own step, after the lookups it depends on, unless one agent can do the whole job itself.\n\
 - If the user did not say something a step needs and it can't be looked up, still plan the step: the agent will ask the user.\n\
 - At most {MAX_STEPS} steps.\n{FORMAT_TEXT}"
@@ -87,8 +93,9 @@ fn revise_prompt(google_ready: bool) -> String {
         "A plan for Leo, a personal assistant, is running. Agents:\n{AGENTS_TEXT}{availability}\n\
 You are given the request, the steps already finished (verified), the step that went wrong or the finding that changes things, and the steps that were still to come. \
 Write the REMAINING steps only: do not repeat finished work, and change the approach if a step failed (a different query, asking the user, another agent). \
+If a research step failed only because the web had little or no answer, do not search again with other wording: continue with what was found, or give up and say what was missing. \
 Same rules as before: self-contained tasks, a concrete `expected` for each, at most {MAX_STEPS} steps.\n{GOOGLE_RULES}\
-If the job cannot be done, reply {{\"steps\":[],\"give_up\":\"why, in one sentence\"}}.\n{FORMAT_TEXT}"
+If the finished steps already answer the request, reply {{\"steps\":[]}} so the answer is written now. If the job cannot be done, reply {{\"steps\":[],\"give_up\":\"why, in one sentence\"}}.\n{FORMAT_TEXT}"
     )
 }
 
@@ -129,6 +136,7 @@ fn parse_steps(value: &Value, google_ready: bool) -> Result<VecDeque<Step>, Stri
             agent,
             task,
             expected: s["expected"].as_str().unwrap_or("").trim().to_string(),
+            scout: s["scout"].as_bool().unwrap_or(false),
         });
         if steps.len() >= MAX_STEPS {
             break;
@@ -162,11 +170,16 @@ fn describe_done(done: &[Done]) -> String {
 
 /// What one agent is told for one step: the whole request, the verified
 /// results so far, its own task, and (on a retry) why the last try was refused.
-fn step_message(goal: &str, done: &[Done], step: &Step, feedback: Option<&str>) -> String {
+fn step_message(goal: &str, done: &[Done], step: &Step, feedback: Option<&str>, already_done: &str) -> String {
     let mut text = format!("Overall request from the user: {goal}\n");
     if !done.is_empty() {
         text.push_str("\nVerified results from earlier steps:\n");
         text.push_str(&describe_done(done));
+        text.push('\n');
+    }
+    if !already_done.trim().is_empty() {
+        text.push_str("\nSteps summary so far (tool calls already made in this request; do not repeat any of them, build on them):\n");
+        text.push_str(already_done);
         text.push('\n');
     }
     text.push_str(&format!("\nYour task: {}\n", step.task));
@@ -210,8 +223,14 @@ pub async fn run_job(ctx: &Ctx, chat: &[ChatMessage]) -> Result<String, String> 
         match run_step(ctx, &goal, &done, &step).await? {
             StepOutcome::Verified { output, replan } => {
                 done.push(Done { agent: step.agent, task: step.task.clone(), output });
-                if replan && replans < MAX_REPLANS && !steps.is_empty() {
-                    replans += 1;
+                // After a scouting step the plan is always reviewed: keep the
+                // raw plan, edit it, or stop because the scout already
+                // answered. That review does not use up the plan edits.
+                let review = step.scout || (replan && replans < MAX_REPLANS);
+                if review && !steps.is_empty() {
+                    if !step.scout {
+                        replans += 1;
+                    }
                     ctx.progress("Adjusting the plan…");
                     match revise_plan(ctx, &goal, &done, None, &steps, google).await {
                         Ok((new_steps, _)) => steps = new_steps,
@@ -259,7 +278,7 @@ async fn run_step(ctx: &Ctx, goal: &str, done: &[Done], step: &Step) -> Result<S
         ctx.clear_log();
         let writes_before = ctx.writes();
 
-        let message = step_message(goal, done, step, feedback.as_deref());
+        let message = step_message(goal, done, step, feedback.as_deref(), &ctx.steps_summary_text());
         let output = run_agent(ctx, step.agent, vec![ChatMessage::text("user", message)]).await?;
         let log = ctx.take_log();
 
@@ -275,6 +294,12 @@ async fn run_step(ctx: &Ctx, goal: &str, done: &[Done], step: &Step) -> Result<S
         } else {
             verdict.reason
         };
+        // Research on the web gives the same answer when asked again, so a
+        // retry only repeats the searches. Take the best answer it gave and
+        // let the plan review and the final reply say what is missing.
+        if step.agent == AgentId::Utility && ctx.writes() == writes_before && !output.trim().is_empty() {
+            return Ok(StepOutcome::Verified { output, replan: verdict.replan });
+        }
         last_output = output;
         if ctx.writes() > writes_before {
             // Something was already changed; trying again could do it twice.
@@ -313,7 +338,7 @@ async fn revise_plan(
             reason,
             clip(output, 800),
         )),
-        None => user.push_str("\nThe last finished step passed, but its result suggests the remaining plan may no longer fit.\n"),
+        None => user.push_str("\nThe last finished step passed. Decide whether the remaining plan still fits what it found: if so, write the same steps again (you may sharpen their tasks with what was learned); if not, write better ones; if the finished steps already answer the request, write none.\n"),
     }
     user.push_str(&format!("\nSteps that were still to come:\n{}\n", describe_steps(remaining.iter())));
 
@@ -384,8 +409,8 @@ mod tests {
     #[test]
     fn step_message_carries_results_and_feedback_but_not_later_steps() {
         let done = vec![Done { agent: AgentId::Utility, task: "Find city".into(), output: "Bangalore".into() }];
-        let step = Step { agent: AgentId::Utility, task: "Get the weather".into(), expected: "Temperature".into() };
-        let m = step_message("weather please", &done, &step, Some("no temperature given"));
+        let step = Step { agent: AgentId::Utility, task: "Get the weather".into(), expected: "Temperature".into(), scout: false };
+        let m = step_message("weather please", &done, &step, Some("no temperature given"), "");
         assert!(m.contains("weather please"));
         assert!(m.contains("Bangalore"));
         assert!(m.contains("Get the weather"));

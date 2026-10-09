@@ -6,6 +6,7 @@ import { SiriOrb, type OrbState } from "./orb";
 import { AgentClient, answerCard, onAgentEvent, type AgentEvent, type Brand } from "./agent";
 import { renderMarkdown } from "./markdown";
 import { typewrite, type Typer } from "./typewriter";
+import { playWarp, type SpaceRun } from "./space";
 
 const STORAGE_KEY = "leo.openrouter.apiKey";
 const STORAGE_MODEL = "leo.openrouter.model";
@@ -105,10 +106,82 @@ void configureGoogleEmail();
 
 // The updater (Rust) downloads and installs a newer release silently, then
 // restarts the app; this only tells the user it is happening.
-void listen<string>("app://updating", () => {
+// While it downloads, a flight through space plays for 15 seconds (the
+// updater waits that long before installing); then the app restarts and the
+// launch animation plays in the new version. If the update fails, the flight
+// ends and the launch animation plays right here instead.
+const spaceCanvas = document.querySelector<HTMLCanvasElement>("#space")!;
+const spaceLine = document.querySelector<HTMLDivElement>("#space-line")!;
+const spaceBar = document.querySelector<HTMLElement>("#space-bar i")!;
+const UPDATE_ANIMATION_MS = 15000;
+const INTRO_MS = 2100;
+const SPACE_LINES: Array<[number, string]> = [
+  [0, "Preparing for launch"],
+  [0.1, "Engaging thrusters"],
+  [0.28, "Crossing the void"],
+  [0.55, "Gathering new light"],
+  [0.78, "Slowing for arrival"],
+  [0.92, "Almost there"],
+];
+let spaceRun: SpaceRun | null = null;
+let warping = false;
+
+// Normal launch: just the orb floating up from the bottom (CSS only). The
+// starfield is reserved for updating.
+function startIntro() {
+  document.body.classList.add("intro");
+  orb.setHover(true);
+  window.setTimeout(() => {
+    document.body.classList.remove("intro");
+    orb.setHover(false);
+  }, INTRO_MS + 100);
+}
+
+function startUpdateWarp() {
+  if (warping) return;
+  warping = true;
+  spaceRun?.stop();
+  document.body.classList.remove("intro");
+  // The flight needs the whole window, so a minimised orb opens up first.
+  if (mode === "widget") void setMode("full");
+  closeSettings();
+  showCaption("");
+  document.body.classList.add("warping");
+  setState("thinking");
   statusText.textContent = "Updating Leo…";
-  showCaption("Updating…");
-});
+  orb.setHover(true);
+  spaceRun = playWarp(spaceCanvas, UPDATE_ANIMATION_MS, {
+    onProgress(p) {
+      spaceBar.style.transform = `scaleX(${p})`;
+      const line = [...SPACE_LINES].reverse().find(([from]) => p >= from);
+      if (line) spaceLine.textContent = line[1];
+    },
+  });
+}
+
+function endUpdateWarp() {
+  if (!warping) return;
+  warping = false;
+  spaceRun?.stop(() => {
+    document.body.classList.remove("warping");
+    statusText.textContent = "Ready";
+    setState("idle");
+    startIntro();
+  });
+}
+
+void listen<string>("app://updating", startUpdateWarp);
+void listen("app://update-failed", endUpdateWarp);
+
+// Development only: Ctrl+Shift+U previews the update flight and then the launch.
+if (import.meta.env.DEV) {
+  window.addEventListener("keydown", (event) => {
+    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "u") {
+      startUpdateWarp();
+      window.setTimeout(endUpdateWarp, UPDATE_ANIMATION_MS + 300);
+    }
+  });
+}
 
 // Window transparency: 0% is a solid dark panel, 100% shows only the blur (or
 // nothing at all with blur off). It sets the opacity of the glass tint.
@@ -175,6 +248,45 @@ function scrollToEnd() {
 
 // The reply currently being typed out, if any.
 let currentTyper: Typer | null = null;
+
+// A reply that is arriving live from the model (streaming). It is drawn into
+// its own bubble as the text comes in and replaced by the final text at the end.
+let liveEl: HTMLDivElement | null = null;
+let liveText = "";
+let liveFrame = 0;
+
+function renderLive() {
+  liveFrame = 0;
+  if (!liveEl) return;
+  renderMarkdown(liveText, liveEl);
+  followEnd();
+}
+
+function addLiveText(text: string) {
+  if (!liveEl) {
+    currentTyper?.finish();
+    currentTyper = null;
+    liveEl = document.createElement("div");
+    liveEl.className = "msg assistant";
+    messagesEl.insertBefore(liveEl, typingEl);
+    document.body.classList.add("has-messages");
+    hideTyping();
+    setState("speaking");
+  }
+  liveText += text;
+  // Several pieces can arrive within one frame; draw once per frame.
+  if (!liveFrame) liveFrame = requestAnimationFrame(renderLive);
+  orb.setLevel(0.22 + 0.14 * Math.sin(performance.now() / 85));
+}
+
+/** Throws away a live reply (the model went on to call a tool, or the run ended). */
+function dropLive() {
+  cancelAnimationFrame(liveFrame);
+  liveFrame = 0;
+  liveEl?.remove();
+  liveEl = null;
+  liveText = "";
+}
 
 // Eases the chat toward the bottom while a reply types, instead of snapping
 // on every character.
@@ -495,6 +607,18 @@ void onAgentEvent(async (event) => {
   // Progress events describe the plan's steps; they are for the debug timing
   // run only. The chat shows tool rows, never the plan.
   if (event.kind === "progress") return;
+  if (event.kind === "delta") {
+    addLiveText(event.text);
+    return;
+  }
+  if (event.kind === "delta_reset") {
+    // The text so far was only a lead-in to a tool call.
+    dropLive();
+    orb.setLevel(0);
+    setState("thinking");
+    showTyping();
+    return;
+  }
   if (event.kind === "ask_user") {
     showAskCard(event);
     return;
@@ -550,6 +674,7 @@ function hideTyping() {
 function clearChat() {
   currentTyper?.finish();
   currentTyper = null;
+  dropLive();
   messagesEl.querySelectorAll(".msg, .tool-step, .card").forEach((el) => el.remove());
   pendingCard = null;
   toolRows.clear();
@@ -776,6 +901,7 @@ async function sendMessage(text: string) {
   llm.cancel();
   const myTurn = ++turnGen;
   orb.setLevel(0);
+  dropLive();
 
   addMessage("user", text);
   showTyping();
@@ -783,6 +909,18 @@ async function sendMessage(text: string) {
   try {
     const reply = await llm.ask(text);
     if (myTurn !== turnGen) return;
+    if (liveEl) {
+      // The reply already appeared live; just put the final text in place.
+      cancelAnimationFrame(liveFrame);
+      liveFrame = 0;
+      renderMarkdown(reply, liveEl);
+      liveEl = null;
+      liveText = "";
+      scrollToEnd();
+      orb.setLevel(0);
+      setState("idle");
+      return;
+    }
     // The orb ripples to the rhythm of the text as it appears and settles
     // when it is done.
     setState("speaking");
@@ -796,6 +934,8 @@ async function sendMessage(text: string) {
   } catch (err) {
     // "cancelled" means a newer message took over; it owns the UI now.
     if (myTurn !== turnGen || errorMessage(err) === "cancelled") return;
+    dropLive();
+    orb.setLevel(0);
     console.error(err);
     addMessage("error", errorMessage(err));
     setState("idle");
@@ -870,7 +1010,9 @@ canvas.addEventListener("click", () => {
 
 // ---------- start ----------
 setState("idle");
+startIntro();
 if (mode === "widget") void invoke("set_mode", { mode });
 else if (!getApiKey() || !getModel()) {
-  openSettings("Welcome! Add your OpenRouter key and a model to get started.");
+  // After the orb has arrived, so the welcome does not cover the launch.
+  window.setTimeout(() => openSettings("Welcome! Add your OpenRouter key and a model to get started."), INTRO_MS);
 }

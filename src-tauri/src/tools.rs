@@ -302,14 +302,32 @@ fn google_presentation(tool: &str) -> Presentation {
     } else if has(&["contact"]) {
         (if reads { "Looking up contacts" } else { "Updating contacts" }, &["google-contacts", "google"])
     } else if has(&["sheet"]) {
-        (if reads { "Reading a spreadsheet" } else { "Updating a spreadsheet" }, &["google-sheets", "google"])
+        (
+            if reads {
+                "Reading a spreadsheet"
+            } else if tool.starts_with("format_") {
+                "Formatting a spreadsheet"
+            } else {
+                "Updating a spreadsheet"
+            },
+            &["google-sheets", "google"],
+        )
     } else if has(&["slides", "presentation"]) {
-        (if reads { "Reading a presentation" } else { "Creating a presentation" }, &["google-slides", "google"])
-    } else if has(&["doc"]) {
+        (
+            if reads {
+                "Reading a presentation"
+            } else if tool.starts_with("create_") || tool.starts_with("import_") {
+                "Creating a presentation"
+            } else {
+                "Designing the slides"
+            },
+            &["google-slides", "google"],
+        )
+    } else if has(&["doc", "paragraph"]) {
         (
             if reads {
                 "Reading a document"
-            } else if tool.starts_with("create_") {
+            } else if tool.starts_with("create_") || tool.starts_with("import_") {
                 "Creating a document"
             } else {
                 "Editing a document"

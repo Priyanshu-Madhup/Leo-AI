@@ -13,6 +13,7 @@ mod openrouter;
 mod orchestrator;
 mod planner;
 mod reflection;
+mod summary;
 mod tools;
 mod types;
 mod updater;

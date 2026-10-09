@@ -24,7 +24,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::agents::{self, AgentId};
 use crate::interact::{self, Approval, AskOption};
 use crate::memory::MemoryState;
-use crate::openrouter::post_chat;
+use crate::openrouter::{post_chat, post_chat_stream};
 use crate::tools;
 use crate::types::{ChatMessage, ToolCall};
 use crate::web::WebState;
@@ -33,7 +33,14 @@ const MAX_ITERATIONS: usize = 8;
 const MAX_DEPTH: usize = 3;
 const MAX_TOOL_RESULT_CHARS: usize = 8000;
 const MAX_HISTORY_MESSAGES: usize = 40;
+/// Web lookups allowed for one request (all agents and steps together). Past
+/// these the tool refuses and the model has to answer with what it has; a
+/// prompt alone does not stop a small model from searching on and on.
+const MAX_SEARCHES: usize = 5;
+const MAX_PAGE_READS: usize = 4;
 const MAX_LOG_LINE: usize = 240;
+const MAX_STEPS_SUMMARY_LINE: usize = 160;
+const MAX_STEPS_SUMMARY_LINES: usize = 30;
 /// Room for a long tool call (e.g. a whole document). If a reply is cut off
 /// mid-call the arguments are broken JSON, so this must not be too small.
 const MAX_OUTPUT_TOKENS: u32 = 4096;
@@ -49,6 +56,12 @@ const BAD_ARGUMENTS: &str = "Your tool call could not be read: its arguments wer
 pub struct AgentState {
     /// The conversation so far: the user's messages and Leo's final replies.
     history: Mutex<Vec<ChatMessage>>,
+    /// Notes on everything older than `history` (see summary.rs).
+    summary: Mutex<String>,
+    /// Held while a summary update runs, so the next request waits for it.
+    folding: Arc<tokio::sync::Mutex<()>>,
+    /// Bumped by "New chat"; an update started before it is thrown away.
+    epoch: AtomicU64,
     /// Bumped by every new run and by `agent_cancel`; a run whose id no
     /// longer matches has been superseded and stops at its next checkpoint.
     turn: Arc<AtomicU64>,
@@ -65,6 +78,12 @@ pub(crate) enum AgentEvent {
         brand: tools::Brand,
     },
     ToolResult { id: String, name: String, ok: bool, error: Option<String> },
+    /// A piece of the reply as the model writes it (only for replies that go
+    /// straight to the user).
+    Delta { text: String },
+    /// The streamed text turned out not to be the final reply (the model went
+    /// on to call a tool), so the UI should drop it.
+    DeltaReset,
     /// What Leo is doing right now, in plain words ("Planning the steps…").
     Progress { text: String },
     /// A question card: waits for `agent_answer` with `{ "text": ... }`.
@@ -106,10 +125,20 @@ pub struct Ctx {
     pub(crate) turn: Arc<AtomicU64>,
     pub(crate) my_turn: u64,
     pub depth: usize,
+    /// Stream the reply to the UI as it is written. Only for a single agent
+    /// answering the user directly, never for plan steps or sub-agents.
+    pub stream: bool,
     /// Set once any tool has returned text written by someone else.
     tainted: Arc<AtomicBool>,
     /// Number of approved, state-changing actions carried out so far.
     writes: Arc<AtomicUsize>,
+    /// Every tool call made so far in this request, in plain words. Unlike
+    /// `log` it is not cleared between plan steps, so later steps can be told
+    /// what has already been done and not repeat it.
+    steps_summary: Arc<Mutex<Vec<String>>>,
+    /// Web searches and page reads made so far, against the limits above.
+    searches: Arc<AtomicUsize>,
+    page_reads: Arc<AtomicUsize>,
     /// Plain-language record of tool calls, read by the verifier.
     log: Arc<Mutex<Vec<String>>>,
     /// Facts saved to memory during this request.
@@ -119,6 +148,11 @@ pub struct Ctx {
 }
 
 impl Ctx {
+    /// What has already been done in this request, for the next step to read.
+    pub fn steps_summary_text(&self) -> String {
+        self.steps_summary.lock().unwrap().iter().map(|l| format!("- {l}")).collect::<Vec<_>>().join("\n")
+    }
+
     pub fn cancelled(&self) -> bool {
         self.turn.load(Ordering::SeqCst) != self.my_turn
     }
@@ -196,7 +230,13 @@ pub fn run_agent<'a>(
     Box::pin(async move {
         let memory_enabled = ctx.app.state::<MemoryState>().is_configured().await;
         let web_enabled = ctx.app.state::<WebState>().key().is_some();
-        let system = agents::system_prompt(agent, memory_enabled, web_enabled);
+        // The date is told up front (by day, so the prompt stays cacheable)
+        // and the agents do not need to look it up.
+        let system = format!(
+            "{}\n\nToday is {} (the user's local date). You already know it; only call current_datetime if you need the exact time of day.",
+            agents::system_prompt(agent, memory_enabled, web_enabled),
+            chrono::Local::now().format("%A, %-d %B %Y")
+        );
         let mut messages = history;
         let mut empty_retries = 0;
 
@@ -215,8 +255,19 @@ pub fn run_agent<'a>(
             if !defs.is_empty() {
                 body["tools"] = Value::Array(defs);
             }
+            crate::openrouter::cache_system_prompt(&mut body);
 
-            let reply = post_chat(&ctx.api_key, &body).await?;
+            let reply = if ctx.stream && ctx.depth == 0 {
+                let app = ctx.app.clone();
+                let mut on_delta = move |text: &str| emit(&app, AgentEvent::Delta { text: text.to_string() });
+                let reply = post_chat_stream(&ctx.api_key, &body, &mut on_delta).await?;
+                if reply.tool_calls.is_some() {
+                    emit(&ctx.app, AgentEvent::DeltaReset);
+                }
+                reply
+            } else {
+                post_chat(&ctx.api_key, &body).await?
+            };
             ctx.check()?;
 
             let calls = reply.tool_calls.clone().unwrap_or_default();
@@ -306,6 +357,20 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
     let name = call.function.name.as_str();
     let args = call.function.arguments.as_str();
 
+    // Refused before anything is shown, so no tool row appears for it.
+    let web_use = match name {
+        "web_search" => Some((&ctx.searches, MAX_SEARCHES, "searches")),
+        "fetch_page" => Some((&ctx.page_reads, MAX_PAGE_READS, "page reads")),
+        _ => None,
+    };
+    if let Some((counter, limit, what)) = web_use {
+        if counter.fetch_add(1, Ordering::SeqCst) >= limit {
+            return Err(format!(
+                "The limit of {limit} web {what} for this request has been reached. Do not try again: answer now with what you already found, and say plainly what you could not find."
+            ));
+        }
+    }
+
     // Anything that changes something needs an approval card: MCP tools not
     // marked read-only, and (once untrusted content has been read) the
     // built-in side-effect tools.
@@ -346,6 +411,13 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
         Err(err) => format!("{title}: failed ({err})"),
     };
     ctx.log.lock().unwrap().push(line.chars().take(MAX_LOG_LINE).collect());
+    {
+        let mut steps_summary = ctx.steps_summary.lock().unwrap();
+        steps_summary.push(line.chars().take(MAX_STEPS_SUMMARY_LINE).collect());
+        if steps_summary.len() > MAX_STEPS_SUMMARY_LINES {
+            steps_summary.remove(0);
+        }
+    }
 
     emit(
         app,
@@ -399,6 +471,7 @@ pub async fn run_request(
     text: String,
 ) -> Result<String, String> {
     let main = model.trim().to_string();
+    let api_key_for_summary = api_key.clone();
     if main.is_empty() {
         return Err("Set an OpenRouter model name in settings first.".to_string());
     }
@@ -416,21 +489,31 @@ pub async fn run_request(
         turn: state.turn.clone(),
         my_turn,
         depth: 0,
+        stream: false,
         tainted: Arc::new(AtomicBool::new(false)),
         writes: Arc::new(AtomicUsize::new(0)),
+        steps_summary: Arc::new(Mutex::new(Vec::new())),
+        searches: Arc::new(AtomicUsize::new(0)),
+        page_reads: Arc::new(AtomicUsize::new(0)),
         log: Arc::new(Mutex::new(Vec::new())),
         saved: Arc::new(Mutex::new(Vec::new())),
         deadline: Arc::new(Mutex::new(Instant::now() + JOB_LIMIT)),
     };
 
+    // A summary update from the last reply may still be running.
+    drop(state.folding.lock().await);
+
     let mut messages = state.history.lock().unwrap().clone();
     messages.push(ChatMessage::text("user", text.clone()));
+    // What the agents read: the summary of older turns, then the recent messages.
+    let prompt = crate::summary::with_summary(&state.summary.lock().unwrap().clone(), &messages);
 
     let route = crate::orchestrator::route(&ctx, &messages).await?;
+    let ctx = Ctx { stream: !matches!(route, crate::orchestrator::Route::Plan), ..ctx };
     let reply = match route {
-        crate::orchestrator::Route::Utility => run_agent(&ctx, AgentId::Utility, messages.clone()).await?,
-        crate::orchestrator::Route::Google => run_agent(&ctx, AgentId::Google, messages.clone()).await?,
-        crate::orchestrator::Route::Plan => crate::planner::run_job(&ctx, &messages).await?,
+        crate::orchestrator::Route::Utility => run_agent(&ctx, AgentId::Utility, prompt.clone()).await?,
+        crate::orchestrator::Route::Google => run_agent(&ctx, AgentId::Google, prompt.clone()).await?,
+        crate::orchestrator::Route::Plan => crate::planner::run_job(&ctx, &prompt).await?,
     };
 
     // After replying, the agent reviews the exchange and decides what to
@@ -454,8 +537,43 @@ pub async fn run_request(
         messages.push(ChatMessage::text("assistant", reply.clone()));
         trim_history(&mut messages);
         *state.history.lock().unwrap() = messages;
+        start_summary_update(&app, state, &api_key_for_summary, &models.main).await;
     }
     Ok(reply)
+}
+
+/// Once the chat is long enough, folds its oldest exchange into the summary
+/// in the background (see summary.rs). A failure just leaves the messages in
+/// place; the next reply tries again with more to fold.
+async fn start_summary_update(app: &AppHandle, state: &AgentState, api_key: &str, model: &str) {
+    let (old, current) = {
+        let history = state.history.lock().unwrap();
+        let current = state.summary.lock().unwrap().clone();
+        let n = crate::summary::fold_count(history.len(), !current.is_empty());
+        if n == 0 {
+            return;
+        }
+        (history[..n].to_vec(), current)
+    };
+    let epoch = state.epoch.load(Ordering::SeqCst);
+    let guard = state.folding.clone().lock_owned().await;
+    let (app, api_key, model) = (app.clone(), api_key.to_string(), model.to_string());
+    tauri::async_runtime::spawn(async move {
+        let result = crate::summary::update(&api_key, &model, &current, &old).await;
+        let state = app.state::<AgentState>();
+        match result {
+            Ok(text) if state.epoch.load(Ordering::SeqCst) == epoch => {
+                let mut history = state.history.lock().unwrap();
+                if history.len() >= old.len() {
+                    history.drain(..old.len());
+                    *state.summary.lock().unwrap() = text;
+                }
+            }
+            Ok(_) => {}
+            Err(err) => eprintln!("summary update failed: {err}"),
+        }
+        drop(guard);
+    });
 }
 
 #[tauri::command]
@@ -466,7 +584,9 @@ pub fn agent_cancel(state: State<'_, AgentState>) {
 #[tauri::command]
 pub fn agent_reset(state: State<'_, AgentState>) {
     state.turn.fetch_add(1, Ordering::SeqCst);
+    state.epoch.fetch_add(1, Ordering::SeqCst);
     state.history.lock().unwrap().clear();
+    state.summary.lock().unwrap().clear();
 }
 
 #[cfg(test)]

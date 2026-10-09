@@ -101,7 +101,7 @@ pub async fn search(api_key: &str, args: &str) -> Result<String, String> {
         .json(&json!({
             "query": query,
             "max_results": limit,
-            "search_depth": "basic",
+            "search_depth": "advanced",
             "include_answer": "basic",
             "topic": topic,
         }))
@@ -123,7 +123,7 @@ pub async fn search(api_key: &str, args: &str) -> Result<String, String> {
     Ok(format_results(&value, query))
 }
 
-const MAX_SNIPPET_CHARS: usize = 450;
+const MAX_SNIPPET_CHARS: usize = 900;
 
 fn format_results(value: &Value, query: &str) -> String {
     let results = value["results"].as_array().cloned().unwrap_or_default();

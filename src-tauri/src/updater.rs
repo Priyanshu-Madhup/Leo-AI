@@ -13,6 +13,9 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+/// The update animation in the window runs this long; the installer waits for
+/// it so the flight is never cut short by the app closing.
+const ANIMATION: Duration = Duration::from_secs(15);
 
 pub fn check_on_launch(app: &AppHandle) {
     // Development builds are never replaced by a release.
@@ -37,10 +40,24 @@ async fn run(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     };
 
+    let started = std::time::Instant::now();
     let _ = app.emit("app://updating", update.version.clone());
-    update
-        .download_and_install(|_chunk, _total| {}, || {})
+    let result = install(&update, started).await;
+    if result.is_err() {
+        // Let the window end the flight and show the launch animation instead.
+        let _ = app.emit("app://update-failed", ());
+        return result;
+    }
+    app.restart()
+}
+
+/// Downloads at once (the animation covers the wait), then holds until the
+/// animation has played out before installing, which closes the app.
+async fn install(update: &tauri_plugin_updater::Update, started: std::time::Instant) -> Result<(), String> {
+    let bytes = update
+        .download(|_chunk, _total| {}, || {})
         .await
         .map_err(|e| e.to_string())?;
-    app.restart()
+    tokio::time::sleep(ANIMATION.saturating_sub(started.elapsed())).await;
+    update.install(bytes).map_err(|e| e.to_string())
 }

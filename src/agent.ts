@@ -16,6 +16,8 @@ export type AgentEvent =
   | { kind: "tool_start"; id: string; name: string; label: string; detail?: string | null; brand?: Brand }
   | { kind: "tool_result"; id: string; name: string; ok: boolean; error?: string | null }
   | { kind: "progress"; text: string }
+  | { kind: "delta"; text: string }
+  | { kind: "delta_reset" }
   | { kind: "ask_user"; id: string; question: string; options: AskOption[] }
   | { kind: "approval_request"; id: string; name: string; label: string; args: Record<string, unknown> };
 
