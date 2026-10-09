@@ -6,7 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { SiriOrb, type OrbState } from "./orb";
 import { AgentClient, answerCard, onAgentEvent, type AgentEvent, type Brand } from "./agent";
 import { renderMarkdown } from "./markdown";
-import { typewrite, type Typer } from "./typewriter";
+import { createStreamTyper, typewrite, type StreamTyper, type Typer } from "./typewriter";
 import { playWarp, type SpaceRun } from "./space";
 
 const STORAGE_KEY = "leo.openrouter.apiKey";
@@ -272,18 +272,11 @@ function scrollToEnd() {
 // The reply currently being typed out, if any.
 let currentTyper: Typer | null = null;
 
-// A reply that is arriving live from the model (streaming). It is drawn into
-// its own bubble as the text comes in and replaced by the final text at the end.
+// A reply that is arriving live from the model (streaming). Its text is
+// queued into a typer that writes it out character by character, so it reads
+// like any other reply while the model is still working.
 let liveEl: HTMLDivElement | null = null;
-let liveText = "";
-let liveFrame = 0;
-
-function renderLive() {
-  liveFrame = 0;
-  if (!liveEl) return;
-  renderMarkdown(liveText, liveEl);
-  followEnd();
-}
+let liveTyper: StreamTyper | null = null;
 
 function addLiveText(text: string) {
   if (!liveEl) {
@@ -295,20 +288,27 @@ function addLiveText(text: string) {
     document.body.classList.add("has-messages");
     hideTyping();
     setState("speaking");
+    liveTyper = createStreamTyper(liveEl, () => {
+      followEnd();
+      orb.setLevel(0.22 + 0.14 * Math.sin(performance.now() / 85));
+    });
   }
-  liveText += text;
-  // Several pieces can arrive within one frame; draw once per frame.
-  if (!liveFrame) liveFrame = requestAnimationFrame(renderLive);
-  orb.setLevel(0.22 + 0.14 * Math.sin(performance.now() / 85));
+  liveTyper?.push(text);
 }
 
-/** Throws away a live reply (the model went on to call a tool, or the run ended). */
+/** Throws away a live reply (the model went on to call a tool, or the run failed). */
 function dropLive() {
-  cancelAnimationFrame(liveFrame);
-  liveFrame = 0;
+  liveTyper?.finish();
   liveEl?.remove();
   liveEl = null;
-  liveText = "";
+  liveTyper = null;
+}
+
+/** A new message arrives while a reply is still typing: show what there is and move on. */
+function finishLive() {
+  liveTyper?.finish();
+  liveEl = null;
+  liveTyper = null;
 }
 
 // Eases the chat toward the bottom while a reply types, instead of snapping
@@ -947,7 +947,7 @@ async function sendMessage(text: string) {
   llm.cancel();
   const myTurn = ++turnGen;
   orb.setLevel(0);
-  dropLive();
+  finishLive();
 
   addMessage("user", text);
   showTyping();
@@ -955,16 +955,17 @@ async function sendMessage(text: string) {
   try {
     const reply = await llm.ask(text);
     if (myTurn !== turnGen) return;
-    if (liveEl) {
-      // The reply already appeared live; just put the final text in place.
-      cancelAnimationFrame(liveFrame);
-      liveFrame = 0;
-      renderMarkdown(reply, liveEl);
+    if (liveTyper) {
+      // The reply has been typing as it arrived; let the typer work off what is
+      // queued, show the final text, then settle the orb.
+      const typer = liveTyper;
       liveEl = null;
-      liveText = "";
-      scrollToEnd();
-      orb.setLevel(0);
-      setState("idle");
+      liveTyper = null;
+      typer.end(reply, () => {
+        scrollToEnd();
+        orb.setLevel(0);
+        if (currentState === "speaking") setState("idle");
+      });
       return;
     }
     // The orb ripples to the rhythm of the text as it appears and settles

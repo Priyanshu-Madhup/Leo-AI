@@ -5,6 +5,8 @@
 // a bold word stays bold as it is typed, and list items, table rows and code
 // blocks only appear once typing reaches them.
 
+import { renderMarkdown } from "./markdown";
+
 export interface Typer {
   /** Show the whole message immediately. */
   finish(): void;
@@ -159,4 +161,133 @@ export function typewrite(root: HTMLElement, onTick?: () => void, onDone?: () =>
 
   frame = requestAnimationFrame(step);
   return { finish };
+}
+
+// ---------- typing a reply that is still arriving ----------
+// Text from the model is queued as it comes in and revealed character by
+// character at a steady pace, like a finished reply would be. The pace speeds
+// up when the queue grows, so the typing never falls far behind the model.
+
+export interface StreamTyper {
+  /** Queue more text from the model. */
+  push(text: string): void;
+  /** The reply is complete: keep typing what is queued, then show `finalText`. */
+  end(finalText: string, onDone?: () => void): void;
+  /** Show everything received so far at once and stop. */
+  finish(): void;
+}
+
+const STREAM_CHARS_PER_SECOND = 110;
+/** The queue is worked off within about this long, however fast text arrives. */
+const STREAM_MAX_LAG_SECONDS = 1.4;
+const STREAM_PAUSE_MS = 60;
+
+/** Closes Markdown that is still open in a half-typed reply, so it renders cleanly. */
+function closeOpenMarkup(text: string): string {
+  let out = text;
+  if ((out.match(/```/g)?.length ?? 0) % 2 === 1) return out + "\n```";
+  if ((out.match(/\*\*/g)?.length ?? 0) % 2 === 1) out += "**";
+  if ((out.match(/`/g)?.length ?? 0) % 2 === 1) out += "`";
+  return out;
+}
+
+export function createStreamTyper(root: HTMLElement, onTick?: () => void): StreamTyper {
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const caret = document.createElement("span");
+  caret.className = "type-caret";
+
+  let received = "";
+  let shown = 0;
+  let ended = false;
+  let finished = false;
+  let onDone: (() => void) | undefined;
+  let frame = 0;
+  let last = 0;
+  let budget = 0;
+  let pauseUntil = 0;
+  let drawn = -1;
+
+  const draw = (withCaret: boolean) => {
+    if (shown === drawn && !withCaret === !caret.isConnected) return;
+    drawn = shown;
+    renderMarkdown(closeOpenMarkup(received.slice(0, shown)), root);
+    if (withCaret) {
+      let tail: Node = root;
+      while (tail.lastChild && tail.lastChild.nodeType === Node.ELEMENT_NODE) tail = tail.lastChild;
+      tail.appendChild(caret);
+    }
+  };
+
+  const complete = () => {
+    if (finished) return;
+    finished = true;
+    cancelAnimationFrame(frame);
+    caret.remove();
+    renderMarkdown(received, root);
+    onTick?.();
+    onDone?.();
+  };
+
+  const step = (now: number) => {
+    frame = 0;
+    if (finished) return;
+    // Capped only against long stalls, so a slow frame rate does not slow the typing.
+    const dt = Math.min(0.25, (now - last) / 1000);
+    last = now;
+
+    if (now >= pauseUntil) {
+      const backlog = received.length - shown;
+      const rate = Math.max(STREAM_CHARS_PER_SECOND, backlog / STREAM_MAX_LAG_SECONDS);
+      budget += rate * dt;
+      let count = Math.floor(budget);
+      budget -= count;
+      while (count-- > 0 && shown < received.length) {
+        const ch = received[shown++];
+        // A brief beat at the end of a sentence reads more naturally.
+        if (ch === "." || ch === "!" || ch === "?" || ch === "\n") {
+          pauseUntil = now + STREAM_PAUSE_MS;
+          break;
+        }
+      }
+    }
+
+    if (shown >= received.length && ended) return complete();
+    draw(true);
+    onTick?.();
+    // Caught up with the model: wait for more text instead of spinning.
+    if (shown < received.length || ended) frame = requestAnimationFrame(step);
+  };
+
+  const run = () => {
+    if (frame || finished) return;
+    last = performance.now();
+    frame = requestAnimationFrame(step);
+  };
+
+  return {
+    push(text) {
+      if (finished) return;
+      received += text;
+      if (reduced) {
+        shown = received.length;
+        draw(false);
+        onTick?.();
+        return;
+      }
+      run();
+    },
+    end(finalText, done) {
+      if (finished) return done?.();
+      onDone = done;
+      ended = true;
+      received = finalText.length >= shown ? finalText : received;
+      if (reduced) return complete();
+      run();
+    },
+    finish() {
+      if (finished) return;
+      shown = received.length;
+      complete();
+    },
+  };
 }
