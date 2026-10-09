@@ -232,11 +232,19 @@ pub fn run_agent<'a>(
         let web_enabled = ctx.app.state::<WebState>().key().is_some();
         // The date is told up front (by day, so the prompt stays cacheable)
         // and the agents do not need to look it up.
-        let system = format!(
+        let mut system = format!(
             "{}\n\nToday is {} (the user's local date). You already know it; only call current_datetime if you need the exact time of day.",
             agents::system_prompt(agent, memory_enabled, web_enabled),
             chrono::Local::now().format("%A, %-d %B %Y")
         );
+        // The general assistant has no Google tools, so when Google is not
+        // usable it must say why instead of inventing a reason.
+        if matches!(agent, AgentId::Utility | AgentId::Google) {
+            if let Some(note) = ctx.app.state::<crate::mcp::McpManager>().google_note() {
+                system.push_str("\n\n");
+                system.push_str(&note);
+            }
+        }
         let mut messages = history;
         let mut empty_retries = 0;
 

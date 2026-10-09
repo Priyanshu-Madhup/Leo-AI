@@ -408,6 +408,31 @@ impl McpManager {
         }
     }
 
+    /// When the user's Google account cannot be used right now, a note for the
+    /// assistant saying why and what to tell the user, so it never claims a
+    /// "security limitation". `None` when Google works.
+    pub fn google_note(&self) -> Option<String> {
+        const HELP: &str = "Do not say it is a security or privacy limitation, and do not mention servers or technical details. ";
+        let status = self.statuses().into_iter().find(|s| s.name == "google");
+        let Some(status) = status else {
+            return Some(format!(
+                "Google (Gmail, Calendar, Drive, Docs, Sheets, Slides, Contacts) is NOT set up in this copy of Leo, so you cannot use the user's Google account. {HELP}Say that Google is not set up on this installation."
+            ));
+        };
+        match (status.state.as_str(), status.needs.as_deref()) {
+            ("ready", None) => None,
+            ("ready", Some(_)) => Some(format!(
+                "Google is connected but the user has not entered their Google email yet, so you cannot use their Google account. {HELP}Tell them to open Settings (the sliders icon), type their Google email in the Google section and press Save, then ask again; Leo will ask them to sign in with Google in the browser the first time."
+            )),
+            ("starting", _) => Some(format!(
+                "Google is still starting up, so you cannot use the user's Google account yet. {HELP}Tell them to wait a few seconds and ask again."
+            )),
+            _ => Some(format!(
+                "Google could not connect, so you cannot use the user's Google account right now. {HELP}Tell them to open Settings, look at the Google section's status, check that their Google email is entered, and press Check for updates in case a fix is available; if it still fails they should restart Leo with an internet connection."
+            )),
+        }
+    }
+
     /// True once the named server has connected and its tools are known.
     pub fn is_ready(&self, server: &str) -> bool {
         self.servers.lock().unwrap().contains_key(server)

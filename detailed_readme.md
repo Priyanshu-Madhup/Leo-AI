@@ -422,3 +422,4 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 - **Streaming typer** (`createStreamTyper` in `typewriter.ts`): streamed text is queued and typed character by character (about 110 chars/s, catching up so it never lags more than about 1.4 s).
 - **mcp.json upgrades**: on every launch `add_missing_tools` adds any Google tool from `DEFAULT_GOOGLE_TOOLS` that an older `mcp.json` lacks (custom entries are kept), so installs created by older versions get new tools after an update.
 - **Update check retries**: each check waits up to 30 s and is tried up to 3 times; every failed attempt is written to `updater.log`.
+- **Google not connected**: when Google cannot be used (not set up, starting, no email, or failed) the assistant is told why and what to tell the user (`McpManager::google_note`), instead of inventing a reason.
