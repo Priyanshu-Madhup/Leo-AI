@@ -1033,3 +1033,27 @@ body.warping #space-text { display: flex; animation: ui-in 0.8s ease 0.4s both; 
   body.intro #chat { animation: none; }
   body.warping #orb { animation: none; }
 }
+
+.update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.outline-btn {
+  padding: 7px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--edge);
+  background: var(--fill);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.outline-btn:hover:not(:disabled) { border-color: rgba(255, 255, 255, 0.4); }
+.outline-btn:disabled { opacity: 0.55; cursor: default; }

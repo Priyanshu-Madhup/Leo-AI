@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -162,6 +163,7 @@ function startUpdateWarp() {
 function endUpdateWarp() {
   if (!warping) return;
   warping = false;
+  document.querySelector<HTMLButtonElement>("#update-btn")!.disabled = false;
   spaceRun?.stop(() => {
     document.body.classList.remove("warping");
     statusText.textContent = "Ready";
@@ -849,6 +851,29 @@ document.querySelectorAll<HTMLButtonElement>(".reveal").forEach((button) => {
     const input = document.getElementById(button.dataset.target ?? "") as HTMLInputElement | null;
     if (input) input.type = input.type === "password" ? "text" : "password";
   });
+});
+
+// ---------- updates ----------
+const appVersionEl = document.querySelector<HTMLSpanElement>("#app-version")!;
+const updateBtn = document.querySelector<HTMLButtonElement>("#update-btn")!;
+const updateStatus = document.querySelector<HTMLParagraphElement>("#update-status")!;
+
+void getVersion()
+  .then((version) => (appVersionEl.textContent = `Leo ${version}`))
+  .catch(() => {});
+
+updateBtn.addEventListener("click", async () => {
+  updateBtn.disabled = true;
+  updateStatus.textContent = "Checking…";
+  try {
+    const result = await invoke<{ state: string; message: string }>("check_for_updates");
+    updateStatus.textContent = result.message;
+    // When an update starts, the flight takes over the window; keep the button off.
+    if (result.state === "updating") return;
+  } catch (err) {
+    updateStatus.textContent = errorMessage(err);
+  }
+  updateBtn.disabled = false;
 });
 
 let savedTimer = 0;

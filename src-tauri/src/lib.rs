@@ -256,7 +256,8 @@ pub fn run() {
             mcp::mcp_set_inject,
             set_mode,
             set_blur,
-            set_shortcut
+            set_shortcut,
+            updater::check_for_updates
         ])
         .setup(|app| {
             // Debug builds only: a headless timing run, switched on by env vars.
