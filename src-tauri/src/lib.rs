@@ -268,7 +268,7 @@ pub fn run() {
             let window = app
                 .get_webview_window("main")
                 .expect("main window must exist");
-            if let Err(err) = apply_mode(&window, "full") {
+            if let Err(err) = apply_mode(&window, "widget") {
                 eprintln!("failed to position window: {err}");
                 let _ = window.show();
             }

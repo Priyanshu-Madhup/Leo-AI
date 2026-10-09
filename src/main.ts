@@ -224,13 +224,18 @@ function setState(next: OrbState) {
 
 // ---------- window mode: full chat view <-> top-right widget ----------
 type Mode = "full" | "widget";
-let mode: Mode = localStorage.getItem(STORAGE_MODE) === "widget" ? "widget" : "full";
+// Leo always starts as the small orb; the chat opens when asked.
+let mode: Mode = "widget";
 document.body.dataset.mode = mode;
 
 async function setMode(next: Mode) {
+  // Opening the chat from the orb always plays the rise-up animation. It
+  // starts invisible, so the window resizing underneath is not seen.
+  const opening = next === "full" && mode === "widget" && !warping;
   mode = next;
   localStorage.setItem(STORAGE_MODE, next);
   document.body.dataset.mode = next;
+  if (opening) startIntro();
   if (next === "widget") closeSettings();
   showCaption("");
   await invoke("set_mode", { mode: next });
@@ -1011,8 +1016,10 @@ canvas.addEventListener("click", () => {
 // ---------- start ----------
 setState("idle");
 startIntro();
-if (mode === "widget") void invoke("set_mode", { mode });
-else if (!getApiKey() || !getModel()) {
-  // After the orb has arrived, so the welcome does not cover the launch.
-  window.setTimeout(() => openSettings("Welcome! Add your OpenRouter key and a model to get started."), INTRO_MS);
+void invoke("set_mode", { mode });
+if (!getApiKey() || !getModel()) {
+  // First run: once the orb has arrived, open the chat window for the welcome.
+  window.setTimeout(() => {
+    void setMode("full").then(() => openSettings("Welcome! Add your OpenRouter key and a model to get started."));
+  }, INTRO_MS);
 }
