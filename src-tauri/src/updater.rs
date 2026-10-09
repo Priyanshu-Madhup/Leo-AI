@@ -20,7 +20,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+/// One try at reaching GitHub may take this long (slow connections, redirects
+/// through GitHub's file servers); a failed try is repeated a couple of times.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+const CHECK_ATTEMPTS: u32 = 3;
 /// The update animation in the window runs this long; the installer waits for
 /// it so the flight is never cut short by the app closing.
 const ANIMATION: Duration = Duration::from_secs(15);
@@ -62,11 +65,20 @@ pub fn check_on_launch(app: &AppHandle) {
 }
 
 async fn find_update(app: &AppHandle) -> Result<Option<Update>, String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    tokio::time::timeout(CHECK_TIMEOUT, updater.check())
-        .await
-        .map_err(|_| "timed out".to_string())?
-        .map_err(|e| e.to_string())
+    let mut last = String::new();
+    for attempt in 1..=CHECK_ATTEMPTS {
+        let updater = app.updater().map_err(|e| e.to_string())?;
+        match tokio::time::timeout(CHECK_TIMEOUT, updater.check()).await {
+            Ok(Ok(found)) => return Ok(found),
+            Ok(Err(e)) => last = e.to_string(),
+            Err(_) => last = "timed out".to_string(),
+        }
+        log(app, &format!("check attempt {attempt} of {CHECK_ATTEMPTS} failed: {last}"));
+        if attempt < CHECK_ATTEMPTS {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
+    Err(last)
 }
 
 /// Plays out the update: announce it, download, wait for the animation, install.
