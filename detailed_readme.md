@@ -423,3 +423,13 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 - **mcp.json upgrades**: on every launch `add_missing_tools` adds any Google tool from `DEFAULT_GOOGLE_TOOLS` that an older `mcp.json` lacks (custom entries are kept), so installs created by older versions get new tools after an update.
 - **Update check retries**: each check waits up to 30 s and is tried up to 3 times; every failed attempt is written to `updater.log`.
 - **Google not connected**: when Google cannot be used (not set up, starting, no email, or failed) the assistant is told why and what to tell the user (`McpManager::google_note`), instead of inventing a reason.
+
+---
+
+## 18. Additions in 2.3.0
+
+- **Seeing the screen** (`vision.rs`): every agent has `look_at_screen {question}`. It captures the primary monitor in memory (Leo's own window is hidden for ~0.2 s), shrinks it to ≤1600 px, encodes JPEG, sends it to the main model through OpenRouter and returns a detailed written description. The image is never written to disk and is dropped after the call. The main model must accept image input. Its result counts as untrusted content (taints the turn). Tool row: "Looking at your screen".
+- **Shared session facts** (`session.rs`, `SessionInfo`): the date/time clock and the IP-based location (`get_location`, via ipwho.is) are stored once per app session. `current_datetime` reads the stored clock (it keeps running from the first read); `get_location` returns the stored place or looks it up once. Every agent's prompt is rebuilt each round with what is already known, so agents use it instead of calling a tool.
+- **All agents** now have `web_search`, `current_datetime`, `get_location` and `look_at_screen` (plus `ask_user`, memory). `fetch_page`, `open_url`, `open_app` stay with the utility agent. Search limits stay per request.
+- **Docs approvals**: after the user approves writing to a Google document (created or first edited) in a request, further edits to that same document (`modify_doc_text`, `update_paragraph_style`, `insert_doc_elements`) in the same request no longer ask again. Scope is the request and that document id only. The Docs prompt also tells the agent to write in as few calls as possible.
+- Correction: the project **is** a git repository (`origin` = GitHub `Priyanshu-Madhup/Leo-AI`, branch `main`); Google tools count is 34.

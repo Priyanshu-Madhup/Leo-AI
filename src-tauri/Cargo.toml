@@ -1,6 +1,6 @@
 [package]
 name = "siri-orb"
-version = "2.2.8"
+version = "2.3.0"
 description = "Leo, an AI assistant with a living orb"
 authors = ["Priyanshu Madhup"]
 edition = "2021"
@@ -29,6 +29,9 @@ window-vibrancy = "0.6"
 tokio = { version = "1", features = ["process", "io-util", "sync", "time", "net"] }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+xcap = "0.9.8"
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
+base64 = "0.23.1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

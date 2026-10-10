@@ -11,6 +11,7 @@
 //! just a tool call (`ask_gmail`, `ask_utility`, ...) that runs that agent's
 //! loop and returns its answer; agents.rs says who may call whom.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -143,6 +144,10 @@ pub struct Ctx {
     log: Arc<Mutex<Vec<String>>>,
     /// Facts saved to memory during this request.
     saved: Arc<Mutex<Vec<String>>>,
+    /// Google documents the user has already approved writing to in this
+    /// request (created or first edited), so follow-up edits to the same
+    /// document do not ask again.
+    docs_approved: Arc<Mutex<HashSet<String>>>,
     /// When the request gives up; moved back while waiting for the user.
     deadline: Arc<Mutex<Instant>>,
 }
@@ -200,6 +205,28 @@ impl Ctx {
         std::mem::take(&mut *self.log.lock().unwrap())
     }
 
+    /// True for an edit to a document the user already approved writing to
+    /// during this request: the edits that follow one approved document are
+    /// one job, so they must not ask again and again.
+    fn doc_already_approved(&self, name: &str, args: &str) -> bool {
+        doc_id_for_edit(name, args).is_some_and(|id| self.docs_approved.lock().unwrap().contains(&id))
+    }
+
+    /// After a Docs write succeeded, remembers which document it was, so
+    /// further edits to it go through without a new card.
+    fn remember_doc(&self, name: &str, args: &str, result: &str) {
+        let id = if is_doc_edit(name) {
+            doc_id_for_edit(name, args)
+        } else if is_doc_create(name) {
+            doc_id_in(result)
+        } else {
+            None
+        };
+        if let Some(id) = id {
+            self.docs_approved.lock().unwrap().insert(id);
+        }
+    }
+
     fn saved_facts(&self) -> Vec<String> {
         self.saved.lock().unwrap().clone()
     }
@@ -211,6 +238,36 @@ fn truncate(mut text: String) -> String {
         text.push_str("\n[truncated]");
     }
     text
+}
+
+fn is_doc_edit(name: &str) -> bool {
+    matches!(
+        name,
+        "google__modify_doc_text" | "google__update_paragraph_style" | "google__insert_doc_elements"
+    )
+}
+
+fn is_doc_create(name: &str) -> bool {
+    matches!(name, "google__create_doc" | "google__import_to_google_doc")
+}
+
+fn doc_id_for_edit(name: &str, args: &str) -> Option<String> {
+    if !is_doc_edit(name) {
+        return None;
+    }
+    serde_json::from_str::<Value>(args)
+        .ok()?
+        .get("document_id")?
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// The id of a document in a tool result: from its `/document/d/<id>` link,
+/// or an `ID: <id>` line.
+fn doc_id_in(result: &str) -> Option<String> {
+    let re = regex::Regex::new(r"(?:/d/|\bID:?\s+)([A-Za-z0-9_-]{20,})").ok()?;
+    re.captures(result).map(|c| c[1].to_string())
 }
 
 /// Empty arguments mean "none"; otherwise they must be a JSON object.
@@ -232,11 +289,7 @@ pub fn run_agent<'a>(
         let web_enabled = ctx.app.state::<WebState>().key().is_some();
         // The date is told up front (by day, so the prompt stays cacheable)
         // and the agents do not need to look it up.
-        let mut system = format!(
-            "{}\n\nToday is {} (the user's local date). You already know it; only call current_datetime if you need the exact time of day.",
-            agents::system_prompt(agent, memory_enabled, web_enabled),
-            chrono::Local::now().format("%A, %-d %B %Y")
-        );
+        let mut system = agents::system_prompt(agent, memory_enabled, web_enabled);
         // The general assistant has no Google tools, so when Google is not
         // usable it must say why instead of inventing a reason.
         if matches!(agent, AgentId::Utility | AgentId::Google) {
@@ -252,7 +305,11 @@ pub fn run_agent<'a>(
             ctx.check()?;
 
             let defs = agents::tool_defs(&ctx.app, agent, memory_enabled);
-            let mut request: Vec<ChatMessage> = vec![ChatMessage::text("system", system.clone())];
+            // What the session already knows (date, location) is re-read every
+            // round, so a lookup by any agent shows up in the others at once.
+            let session_note = ctx.app.state::<crate::session::SessionInfo>().prompt_note();
+            let mut request: Vec<ChatMessage> =
+                vec![ChatMessage::text("system", format!("{system}\n\n{session_note}"))];
             request.extend(messages.iter().cloned());
             let mut body = json!({
                 "model": ctx.models.main,
@@ -382,8 +439,9 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
     // Anything that changes something needs an approval card: MCP tools not
     // marked read-only, and (once untrusted content has been read) the
     // built-in side-effect tools.
-    let needs_approval = app.state::<crate::mcp::McpManager>().requires_approval(name)
-        || (ctx.tainted() && tools::is_side_effect(name));
+    let needs_approval = (app.state::<crate::mcp::McpManager>().requires_approval(name)
+        || (ctx.tainted() && tools::is_side_effect(name)))
+        && !ctx.doc_already_approved(name, args);
 
     if needs_approval {
         let waiting_since = Instant::now();
@@ -396,13 +454,23 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
     }
 
     emit(app, tool_start(call));
-    let outcome = tools::execute(app, name, args).await;
+    let outcome = if name == "look_at_screen" {
+        crate::vision::look(ctx, args).await
+    } else {
+        tools::execute(app, name, args).await
+    };
+    if matches!(&outcome, Err(e) if e == "cancelled") {
+        return Err("cancelled".to_string());
+    }
 
     if tools::returns_untrusted_content(app, name) {
         ctx.tainted.store(true, Ordering::SeqCst);
     }
     if needs_approval && outcome.is_ok() {
         ctx.writes.fetch_add(1, Ordering::SeqCst);
+    }
+    if let Ok(result) = &outcome {
+        ctx.remember_doc(name, args, result);
     }
     if name == "remember" && outcome.is_ok() {
         if let Some(fact) = serde_json::from_str::<Value>(args)
@@ -505,6 +573,7 @@ pub async fn run_request(
         page_reads: Arc::new(AtomicUsize::new(0)),
         log: Arc::new(Mutex::new(Vec::new())),
         saved: Arc::new(Mutex::new(Vec::new())),
+        docs_approved: Arc::new(Mutex::new(HashSet::new())),
         deadline: Arc::new(Mutex::new(Instant::now() + JOB_LIMIT)),
     };
 
@@ -600,6 +669,19 @@ pub fn agent_reset(state: State<'_, AgentState>) {
 #[cfg(test)]
 mod tests {
     use super::arguments_are_valid;
+
+    #[test]
+    fn docs_are_approved_once_per_document() {
+        let id = "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+        let link = format!("Created. https://docs.google.com/document/d/{id}/edit");
+        assert_eq!(super::doc_id_in(&link).as_deref(), Some(id));
+        assert_eq!(super::doc_id_in("ID: 1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 done").as_deref(), Some(id));
+        let args = format!(r#"{{"document_id":"{id}","start_index":1}}"#);
+        assert_eq!(super::doc_id_for_edit("google__modify_doc_text", &args).as_deref(), Some(id));
+        // Only edit tools are covered; other tools are not.
+        assert_eq!(super::doc_id_for_edit("google__create_doc", &args), None);
+        assert_eq!(super::doc_id_for_edit("google__modify_doc_text", "{}"), None);
+    }
 
     #[test]
     fn rejects_cut_off_arguments() {

@@ -8,6 +8,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::mcp::{self, McpManager};
 use crate::memory::MemoryState;
+use crate::session::SessionInfo;
 use crate::web::WebState;
 
 /// Tool schemas in OpenAI function-calling format. Memory tools are only
@@ -39,7 +40,7 @@ pub fn is_side_effect(name: &str) -> bool {
 /// True for tools whose results come from outside the app and may contain
 /// text written by someone else.
 pub fn returns_untrusted_content(app: &AppHandle, name: &str) -> bool {
-    matches!(name, "web_search" | "fetch_page") || app.state::<McpManager>().owns(name)
+    matches!(name, "web_search" | "fetch_page" | "look_at_screen") || app.state::<McpManager>().owns(name)
 }
 
 pub fn memory_definitions() -> serde_json::Value {
@@ -136,8 +137,29 @@ fn base_definitions() -> serde_json::Value {
         {
             "type": "function",
             "function": {
+                "name": "look_at_screen",
+                "description": "Take a screenshot of the user's screen and get a detailed written description of it from the vision model. Use it whenever the request involves what is on the screen (\"what is this error\", \"read what I have open\", \"what am I looking at\") or when you need to see the result of something on screen. The screenshot is temporary and never saved. Put in `question` exactly what you need to know so the description focuses on it.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": { "type": "string", "description": "What you want to find out from the screen, e.g. \"what does the error dialog say?\". Leave empty for a full description." }
+                    }
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "current_datetime",
-                "description": "Get the user's current local date, time and time zone.",
+                "description": "Get the user's current local date, time and time zone. Read from the session clock shared by all agents.",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_location",
+                "description": "Get the user's approximate location (city, region, country, time zone) from their internet connection. The result is stored for the whole session and shared by all agents, so only call it if your instructions say the location is not known yet.",
                 "parameters": { "type": "object", "properties": {} }
             }
         },
@@ -259,6 +281,7 @@ pub fn present(name: &str, args: &str) -> Presentation {
 
     match name {
         "current_datetime" => plain("Checking the time", None, Brand::branded(&["clock"], "clock")),
+        "get_location" => plain("Finding your location", None, Brand::icon("globe")),
         "web_search" => plain("Searching the web", some(field("query")), Brand::branded(&["web-search"], "globe")),
         "fetch_page" => match host_of(&field("url")) {
             Some(host) => plain("Reading a page", Some(host.clone()), Brand::site(&host)),
@@ -273,6 +296,7 @@ pub fn present(name: &str, args: &str) -> Presentation {
             let brand = if app.is_empty() { Brand::icon("tool") } else { Brand::app(&app) };
             plain("Opening an app", some(app), brand)
         }
+        "look_at_screen" => plain("Looking at your screen", some(field("question")), Brand::branded(&["screen"], "eye")),
         "recall_memory" => plain("Checking memory", None, Brand::branded(&["memory"], "memory")),
         "remember" => plain("Saving to memory", None, Brand::branded(&["memory"], "memory")),
         "ask_user" => plain("Asking you", None, Brand::icon("tool")),
@@ -353,9 +377,11 @@ pub fn describe(name: &str, args: &str) -> String {
 
 pub async fn execute(app: &AppHandle, name: &str, args: &str) -> Result<String, String> {
     match name {
-        "current_datetime" => Ok(chrono::Local::now()
-            .format("%A, %d %B %Y, %H:%M (UTC%:z)")
-            .to_string()),
+        "current_datetime" => Ok(app.state::<SessionInfo>().now_text()),
+        "get_location" => {
+            let place = app.state::<SessionInfo>().location().await?;
+            Ok(format!("{} (approximate, from the user's internet connection)", place.describe()))
+        }
         "web_search" => {
             let key = app
                 .state::<WebState>()
@@ -364,6 +390,7 @@ pub async fn execute(app: &AppHandle, name: &str, args: &str) -> Result<String, 
             crate::web::search(&key, args).await
         }
         "fetch_page" => crate::web::fetch(args).await,
+        "look_at_screen" => Err("The screen is read through the agent loop.".to_string()),
         "open_url" => open_url(app, args),
         "open_app" => open_app(app, args),
         "recall_memory" => {

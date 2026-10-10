@@ -13,11 +13,13 @@ mod openrouter;
 mod orchestrator;
 mod planner;
 mod reflection;
+mod session;
 mod summary;
 mod tools;
 mod types;
 mod updater;
 mod verifier;
+mod vision;
 mod web;
 
 #[cfg(debug_assertions)]
@@ -299,6 +301,7 @@ pub fn run() {
         .manage(mcp::McpManager::default())
         .manage(interact::InteractState::default())
         .manage(web::WebState::default())
+        .manage(session::SessionInfo::default())
         .invoke_handler(tauri::generate_handler![
             agent::agent_run,
             agent::agent_cancel,
