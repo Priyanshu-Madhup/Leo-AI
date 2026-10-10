@@ -433,3 +433,8 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 - **All agents** now have `web_search`, `current_datetime`, `get_location` and `look_at_screen` (plus `ask_user`, memory). `fetch_page`, `open_url`, `open_app` stay with the utility agent. Search limits stay per request.
 - **Docs approvals**: after the user approves writing to a Google document (created or first edited) in a request, further edits to that same document (`modify_doc_text`, `update_paragraph_style`, `insert_doc_elements`) in the same request no longer ask again. Scope is the request and that document id only. The Docs prompt also tells the agent to write in as few calls as possible.
 - Correction: the project **is** a git repository (`origin` = GitHub `Priyanshu-Madhup/Leo-AI`, branch `main`); Google tools count is 34.
+
+## 19. Changes in 3.0.0
+
+- `look_at_screen` uses `quick_chat` (reasoning off, then a larger budget), so reasoning models no longer return an empty description.
+- While taking a screenshot Leo shrinks to the orb instead of hiding: Rust emits `screen://prepare`, the frontend switches to widget mode and calls `screen_prepared`, Rust captures, then emits `screen://done` and the frontend reopens the chat. The window is never hidden.

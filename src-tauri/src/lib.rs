@@ -305,6 +305,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             agent::agent_run,
             agent::agent_cancel,
+            vision::screen_prepared,
             agent::agent_reset,
             interact::agent_answer,
             memory::memory_configure,

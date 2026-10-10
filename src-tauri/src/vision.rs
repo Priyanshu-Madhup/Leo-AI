@@ -5,8 +5,9 @@
 //! disk. What goes back to the agent is a detailed written description, so the
 //! agent never handles pixels itself and any model can use the result.
 //!
-//! Leo's own window is hidden for the instant of the capture so it does not
-//! cover what the user wants looked at.
+//! Leo shrinks itself into the orb for the moment of the capture (the
+//! frontend does it, so the window and its state stay consistent) and opens
+//! the chat again afterwards; the window is never hidden or closed.
 
 use std::io::Cursor;
 use std::time::Duration;
@@ -15,17 +16,29 @@ use base64::Engine;
 use image::{imageops::FilterType, DynamicImage, ImageEncoder};
 use serde::Deserialize;
 use serde_json::json;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter};
+use tokio::sync::Notify;
 
 use crate::agent::Ctx;
-use crate::openrouter::post_chat;
+use crate::openrouter::quick_chat;
 
 /// Longest side sent to the model. Larger screens are shrunk to this.
 const MAX_SIDE: u32 = 1600;
 const JPEG_QUALITY: u8 = 80;
 const MAX_ANALYSIS_TOKENS: u32 = 1800;
 /// Time for the window to disappear from the screen before the capture.
-const HIDE_SETTLE: Duration = Duration::from_millis(220);
+const SETTLE: Duration = Duration::from_millis(250);
+/// How long to wait for the frontend to finish shrinking to the orb.
+const MINIMIZE_WAIT: Duration = Duration::from_secs(3);
+
+/// Signalled by the frontend once the window is down to the orb.
+static MINIMIZED: Notify = Notify::const_new();
+
+/// The frontend calls this when it has switched to the orb for a screenshot.
+#[tauri::command]
+pub fn screen_prepared() {
+    MINIMIZED.notify_one();
+}
 
 const ANALYST: &str = "You are the eyes of an assistant. You are given a screenshot of the user's screen and what the assistant wants to know. \
 Describe what is really visible, in detail and in plain text: which apps and windows are open and which one is in focus, every readable piece of text (titles, menus, messages, numbers, error messages, code), the layout, buttons and fields and their state, images and charts and what they show. \
@@ -71,7 +84,9 @@ pub async fn look(ctx: &Ctx, args: &str) -> Result<String, String> {
         "max_tokens": MAX_ANALYSIS_TOKENS,
     });
 
-    let reply = post_chat(&ctx.api_key, &body).await.map_err(|e| {
+    // quick_chat: a model that reasons in hidden tokens can use the whole budget
+    // and return nothing, so it switches that off, then retries with more room.
+    let reply = quick_chat(&ctx.api_key, body).await.map_err(|e| {
         if e.contains("image") || e.contains("vision") || e.contains("multimodal") || e.contains("modalit") {
             "The chosen model can't look at images. Pick a model with image input in settings.".to_string()
         } else {
@@ -87,14 +102,12 @@ pub async fn look(ctx: &Ctx, args: &str) -> Result<String, String> {
 
 /// Screenshot of the primary monitor as an in-memory JPEG.
 async fn capture_jpeg(app: &AppHandle) -> Result<Vec<u8>, String> {
-    let window = app.get_webview_window("main");
-    let was_visible = window.as_ref().is_some_and(|w| w.is_visible().unwrap_or(false));
-    if was_visible {
-        if let Some(w) = &window {
-            let _ = w.hide();
-        }
-        tokio::time::sleep(HIDE_SETTLE).await;
-    }
+    // Drop an acknowledgement left over from an earlier, timed-out request.
+    let _ = tokio::time::timeout(Duration::from_millis(1), MINIMIZED.notified()).await;
+    let _ = app.emit("screen://prepare", ());
+    // If the frontend does not answer, capture anyway rather than fail.
+    let _ = tokio::time::timeout(MINIMIZE_WAIT, MINIMIZED.notified()).await;
+    tokio::time::sleep(SETTLE).await;
 
     let shot = tokio::task::spawn_blocking(|| -> Result<Vec<u8>, String> {
         let monitors = xcap::Monitor::all().map_err(|e| format!("Couldn't reach the screen: {e}"))?;
@@ -109,12 +122,8 @@ async fn capture_jpeg(app: &AppHandle) -> Result<Vec<u8>, String> {
     .await
     .map_err(|e| e.to_string())?;
 
-    // Always bring Leo back, even when the capture failed.
-    if was_visible {
-        if let Some(w) = &window {
-            let _ = w.show();
-        }
-    }
+    // Always open the chat again, even when the capture failed.
+    let _ = app.emit("screen://done", ());
     shot
 }
 

@@ -806,6 +806,23 @@ shortcutClear.addEventListener("click", () => {
 // Pressing the shortcut: the orb widget grows to the full chat, and pressing
 // it again shrinks the chat back to the widget. Coming back from the taskbar
 // only shows the window.
+// Leo shrinks to the orb while it takes a screenshot (so the chat is not in
+// the picture) and opens the chat again afterwards.
+let reopenAfterScreenshot = false;
+void listen("screen://prepare", async () => {
+  reopenAfterScreenshot = mode === "full";
+  try {
+    if (reopenAfterScreenshot) await setMode("widget");
+  } finally {
+    await invoke("screen_prepared");
+  }
+});
+void listen("screen://done", async () => {
+  if (!reopenAfterScreenshot) return;
+  reopenAfterScreenshot = false;
+  await setMode("full");
+});
+
 void listen<boolean>("shortcut://pressed", (event) => {
   if (event.payload && mode === "full") return;
   void setMode(mode === "widget" ? "full" : "widget");
