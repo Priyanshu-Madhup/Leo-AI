@@ -4286,7 +4286,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "siri-orb"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -4303,6 +4303,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "window-vibrancy 0.6.0",
+ "windows-sys 0.59.0",
  "xcap",
 ]
 

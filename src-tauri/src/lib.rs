@@ -209,9 +209,7 @@ fn widget_target(window: &WebviewWindow, saved: Option<(i32, i32)>) -> tauri::Re
 /// window's rectangle glides from its current size and place to the widget's,
 /// then the widget settings (no glass, no taskbar entry) are applied.
 async fn glide_to_widget(window: WebviewWindow) -> tauri::Result<()> {
-    const STEPS: u32 = 24;
-    const FRAME: std::time::Duration = std::time::Duration::from_millis(13);
-    let ease = |t: f64| if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 };
+    let ease = |t: f64| bezier_ease(t);
     let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
 
     // Read before anything moves, so the glide cannot overwrite the saved spot.
@@ -222,24 +220,65 @@ async fn glide_to_widget(window: WebviewWindow) -> tauri::Result<()> {
     let (to_x, to_y) = widget_target(&window, saved)?;
     let (to_w, to_h) = ((WIDGET_SIZE.0 * scale).round(), (WIDGET_SIZE.1 * scale).round());
 
-    for i in 1..=STEPS {
-        let e = ease(i as f64 / STEPS as f64);
-        let size = PhysicalSize {
-            width: lerp(from_size.width as f64, to_w, e).round() as u32,
-            height: lerp(from_size.height as f64, to_h, e).round() as u32,
-        };
-        let pos = PhysicalPosition {
-            x: lerp(from_pos.x as f64, to_x as f64, e).round() as i32,
-            y: lerp(from_pos.y as f64, to_y as f64, e).round() as i32,
-        };
-        window.set_size(Size::Physical(size))?;
-        window.set_position(Position::Physical(pos))?;
-        tokio::time::sleep(FRAME).await;
+    // The blur behind the window is redrawn on every resize, which is what
+    // makes a shrinking window stutter. The chat has already faded out, so
+    // it is switched off before the motion starts.
+    set_glass(&window, false);
+
+    // Time-based, with the same curve and length as the orb's own CSS
+    // transition, so the orb and the window shrink in step on any frame rate.
+    let started = std::time::Instant::now();
+    loop {
+        let t = (started.elapsed().as_secs_f64() / GLIDE_SECONDS).min(1.0);
+        let e = ease(t);
+        move_window(
+            &window,
+            lerp(from_pos.x as f64, to_x as f64, e).round() as i32,
+            lerp(from_pos.y as f64, to_y as f64, e).round() as i32,
+            lerp(from_size.width as f64, to_w, e).round() as u32,
+            lerp(from_size.height as f64, to_h, e).round() as u32,
+        )?;
+        if t >= 1.0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(4)).await;
     }
 
     window.set_skip_taskbar(true)?;
-    set_glass(&window, false);
     place_widget(&window, saved)
+}
+
+/// How long the glide to the orb takes; matches `--orb-d` in styles.css.
+const GLIDE_SECONDS: f64 = 0.55;
+
+/// The CSS curve `cubic-bezier(0.22, 1, 0.36, 1)`: progress for time `x` (0..1).
+fn bezier_ease(x: f64) -> f64 {
+    let bez = |t: f64, a: f64, b: f64| 3.0 * (1.0 - t).powi(2) * t * a + 3.0 * (1.0 - t) * t * t * b + t.powi(3);
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..28 {
+        let mid = (lo + hi) / 2.0;
+        if bez(mid, 0.22, 0.36) < x {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    bez((lo + hi) / 2.0, 1.0, 1.0)
+}
+
+/// Moves and resizes in ONE system call so the two never show out of step.
+fn move_window(window: &WebviewWindow, x: i32, y: i32, w: u32, h: u32) -> tauri::Result<()> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+        if let Ok(hwnd) = window.hwnd() {
+            // SAFETY: the handle belongs to this live window.
+            unsafe { SetWindowPos(hwnd.0 as _, std::ptr::null_mut(), x, y, w as i32, h as i32, SWP_NOZORDER | SWP_NOACTIVATE) };
+            return Ok(());
+        }
+    }
+    window.set_size(Size::Physical(PhysicalSize { width: w, height: h }))?;
+    window.set_position(Position::Physical(PhysicalPosition { x, y }))
 }
 
 #[tauri::command]
@@ -356,4 +395,23 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod glide_tests {
+    use super::bezier_ease;
+
+    #[test]
+    fn glide_curve_runs_from_zero_to_one_without_going_back() {
+        assert!(bezier_ease(0.0).abs() < 1e-6);
+        assert!((bezier_ease(1.0) - 1.0).abs() < 1e-6);
+        let mut last = 0.0;
+        for i in 1..=100 {
+            let v = bezier_ease(i as f64 / 100.0);
+            assert!(v >= last, "curve went backwards at {i}");
+            last = v;
+        }
+        // An ease-out: most of the move happens early.
+        assert!(bezier_ease(0.3) > 0.6);
+    }
 }

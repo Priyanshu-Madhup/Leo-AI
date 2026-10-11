@@ -12,7 +12,7 @@ interface StateStyle {
 // A monochrome chrome sphere: state shows up as brightness and pace, never
 // as hue.
 const STATE_STYLE: Record<OrbState, StateStyle> = {
-  idle: { tones: [0.2, 0.5, 0.86], baseSpeed: 0.28, glow: 0.3, ripple: 0.1 },
+  idle: { tones: [0.2, 0.5, 0.86], baseSpeed: 0.38, glow: 0.34, ripple: 0.22 },
   // Generating a reply: the strongest, flowing ripples.
   thinking: { tones: [0.12, 0.36, 0.66], baseSpeed: 1.5, glow: 0.5, ripple: 1.0 },
   // Writing the reply out.
@@ -41,6 +41,7 @@ uniform float uWave;
 uniform float uRipple;
 uniform float uLevel;
 uniform float uGlow;
+uniform float uCalm;
 uniform vec3 uC0;
 uniform vec3 uC1;
 uniform vec3 uC2;
@@ -87,7 +88,8 @@ float map(vec3 p) {
   vec3 axisB = normalize(vec3(cos(uTime * 0.13), 0.5, sin(uTime * 0.19)));
   float ripple = sin(dot(dir, axisA) * 4.5 - uWave) + 0.6 * sin(dot(dir, axisB) * 3.4 + uWave * 0.75);
   float amp = 0.06 + 0.17 * uLevel;
-  float breathe = 0.014 * sin(uTime * 0.9);
+  // When calm the orb breathes deeper, on two slow beats that never quite line up.
+  float breathe = (0.014 + 0.018 * uCalm) * sin(uTime * 0.9) + 0.01 * uCalm * sin(uTime * 0.37 + 1.1);
   return r - 0.55 - breathe - amp * (field(p) - 0.64) - 0.032 * uRipple * ripple;
 }
 
@@ -100,7 +102,8 @@ vec3 normalAt(vec3 p) {
 
 void main() {
   vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / min(uRes.x, uRes.y);
-  vec3 ro = vec3(0.0, 0.0, -2.4);
+  // When calm the whole orb drifts a little, like something floating.
+  vec3 ro = vec3(0.07 * uCalm * sin(uTime * 0.42), 0.055 * uCalm * sin(uTime * 0.31 + 1.3), -2.4);
   vec3 rd = normalize(vec3(uv, 1.9));
 
   float t = 0.0;
@@ -128,7 +131,8 @@ void main() {
 
   vec3 n = normalAt(pMin);
   float fres = pow(1.0 - max(dot(n, -rd), 0.0), 2.4);
-  vec3 L = normalize(vec3(-0.5, 0.7, -0.6));
+  // The highlight wanders slowly across the surface when calm.
+  vec3 L = normalize(vec3(-0.5 + 0.35 * uCalm * sin(uTime * 0.28), 0.7, -0.6 + 0.25 * uCalm * cos(uTime * 0.23)));
   float diff = max(dot(n, L), 0.0);
   float spec = pow(max(dot(reflect(rd, n), L), 0.0), 48.0);
 
@@ -205,7 +209,7 @@ export class SiriOrb {
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-    for (const name of ["uRes", "uPhase", "uTime", "uWave", "uRipple", "uLevel", "uGlow", "uC0", "uC1", "uC2"]) {
+    for (const name of ["uRes", "uPhase", "uTime", "uWave", "uRipple", "uLevel", "uGlow", "uCalm", "uC0", "uC1", "uC2"]) {
       this.uniforms[name] = gl.getUniformLocation(program, name);
     }
     gl.clearColor(0, 0, 0, 0);
@@ -303,6 +307,8 @@ export class SiriOrb {
     gl.uniform1f(u.uRipple, Math.min(1.3, s.ripple + this.smoothLevel * 0.4));
     gl.uniform1f(u.uLevel, drive);
     gl.uniform1f(u.uGlow, s.glow);
+    // 1 when idle, fading to 0 as the orb becomes active (ripple rises).
+    gl.uniform1f(u.uCalm, Math.min(1, Math.max(0, (0.6 - s.ripple) / 0.38)));
     const [t0, t1, t2] = s.tones;
     gl.uniform3f(u.uC0, t0, t0, t0);
     gl.uniform3f(u.uC1, t1, t1, t1);

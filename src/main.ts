@@ -6,6 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { SiriOrb, type OrbState } from "./orb";
 import { AgentClient, answerCard, onAgentEvent, type AgentEvent, type Brand } from "./agent";
 import { renderMarkdown } from "./markdown";
+import { BUG_FIXES_LINE, RELEASES, releasesSince, type Release } from "./changelog";
 import { createStreamTyper, typewrite, type StreamTyper, type Typer } from "./typewriter";
 import { playWarp, type SpaceRun } from "./space";
 
@@ -20,6 +21,7 @@ const STORAGE_MODE = "leo.mode";
 const STORAGE_SETUP = "leo.setupShown";
 const STORAGE_BLUR = "leo.blur";
 const STORAGE_SHORTCUT = "leo.shortcut";
+const STORAGE_LAST_VERSION = "leo.lastVersion";
 const STORAGE_TRANSPARENCY = "leo.transparency";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#orb")!;
@@ -255,6 +257,7 @@ async function setMode(next: Mode) {
   localStorage.setItem(STORAGE_MODE, next);
   document.body.dataset.mode = next;
   if (opening) startIntro();
+  if (next === "full") flushWhatsNew();
   if (next === "widget") closeSettings();
   showCaption("");
   try {
@@ -1166,6 +1169,71 @@ canvas.addEventListener("click", () => {
     return;
   }
   if (mode === "widget") void setMode("full");
+});
+
+// ---------- what's new ----------
+// After an update the new features are listed once, inside the app. Bug fixes
+// are never itemised: they are one general line.
+const whatsNewPanel = document.querySelector<HTMLDivElement>("#whatsnew")!;
+const whatsNewBody = document.querySelector<HTMLDivElement>("#whatsnew-body")!;
+let pendingWhatsNew: Release[] | null = null;
+// Read now, before start-up sets the flag: true when this is not a new install.
+const hadEarlierInstall = !!localStorage.getItem(STORAGE_SETUP);
+
+function showWhatsNew(releases: Release[]) {
+  whatsNewBody.textContent = "";
+  for (const release of releases) {
+    const head = document.createElement("h3");
+    head.textContent = `Leo ${release.version}`;
+    const list = document.createElement("ul");
+    for (const feature of release.features) {
+      const item = document.createElement("li");
+      item.textContent = feature;
+      list.appendChild(item);
+    }
+    whatsNewBody.append(head, list);
+  }
+  const fixes = document.createElement("p");
+  fixes.className = "fixes";
+  fixes.textContent = BUG_FIXES_LINE;
+  whatsNewBody.appendChild(fixes);
+  whatsNewPanel.classList.remove("hidden");
+}
+
+function closeWhatsNew() {
+  whatsNewPanel.classList.add("hidden");
+}
+
+/** Shown when the chat is on screen; a minimised orb waits until it opens. */
+function flushWhatsNew() {
+  if (!pendingWhatsNew || mode !== "full" || warping) return;
+  const releases = pendingWhatsNew;
+  pendingWhatsNew = null;
+  window.setTimeout(() => showWhatsNew(releases), 900);
+}
+
+void getVersion()
+  .then((current) => {
+    // Installs from before versions were tracked were on 2.2.8 or older.
+    const seen = localStorage.getItem(STORAGE_LAST_VERSION) ?? (hadEarlierInstall ? "2.2.8" : null);
+    localStorage.setItem(STORAGE_LAST_VERSION, current);
+    // A brand new install has nothing to compare with, so it gets no notes.
+    if (!seen || seen === current) return;
+    const releases = releasesSince(seen, current);
+    if (releases.length > 0) {
+      pendingWhatsNew = releases.slice(0, 3);
+      flushWhatsNew();
+    }
+  })
+  .catch(() => {});
+
+document.querySelector<HTMLButtonElement>("#whatsnew-close")!.addEventListener("click", closeWhatsNew);
+whatsNewPanel.addEventListener("click", (event) => {
+  if (event.target === whatsNewPanel) closeWhatsNew();
+});
+document.querySelector<HTMLButtonElement>("#whatsnew-btn")!.addEventListener("click", () => {
+  closeSettings();
+  showWhatsNew(RELEASES.slice(0, 3));
 });
 
 // ---------- start ----------

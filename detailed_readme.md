@@ -450,3 +450,9 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 - Chat history in SQLite (section 20).
 - Toolbar fix: `.full-only` / `.widget-only` now use `!important`, because `#toolbar button { display: grid }` out-ranked them and showed the wrong buttons in each mode.
 - Docs: a second create with the same title in one request is refused (the agent edits the first); the Docs agent must not read documents back after writing; request limit raised from 5 to 10 minutes.
+
+## 22. Changes in 3.2.0
+
+- **What's new in the UI** (`src/changelog.ts`): after an update, a panel lists the new features once (up to the last 3 releases), ending with one general "Bug fixes and improvements" line. **Rule for every release: add an entry at the top of `RELEASES` with plain-language feature lines; never itemise bug fixes.** Shown in the full window (a minimised orb waits until it opens); a fresh install gets none; Settings -> Updates has a "What's new" link. The last seen version is `leo.lastVersion` in local storage; installs from before this existed count as 2.2.8.
+- **Smoother minimise** (`glide_to_widget` in `lib.rs`): time-based (0.55 s) with the same cubic-bezier as the orb's CSS transition, one `SetWindowPos` call per frame (Windows, `windows-sys`) so position and size never show out of step, and the acrylic blur is switched off before the motion because redrawing it on every resize caused the stutter.
+- **Idle orb motion** (`orb.ts`): a `uCalm` uniform (1 when idle, 0 when active) adds a slow drift of the whole orb, deeper two-beat breathing and a wandering highlight; idle ripple and flow speed are higher.

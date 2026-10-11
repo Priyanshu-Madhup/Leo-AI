@@ -1,6 +1,6 @@
 [package]
 name = "siri-orb"
-version = "3.1.0"
+version = "3.2.0"
 description = "Leo, an AI assistant with a living orb"
 authors = ["Priyanshu Madhup"]
 edition = "2021"
@@ -42,3 +42,6 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
