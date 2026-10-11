@@ -1,6 +1,6 @@
-﻿# Leo â€” detailed project guide
+# Leo — detailed project guide
 
-This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour.
+This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.3.0.**
 
 > Project root: `P:\Leo\siri-orb` (the app; it is the root of the GitHub repo `Priyanshu-Madhup/Leo-AI`). `README.md` is the short user-facing page (install, release steps). One level up, `P:\Leo\Leo_ Functionalities.excalidraw` is the original feature diagram.
 
@@ -12,13 +12,15 @@ Leo is a **Windows desktop chat assistant** with a living 3D orb. You type to it
 
 Two window modes:
 
-- **Full mode** â€” a 440Ã—700 frosted-glass chat window, centred. Large orb on top, chat below, composer at the bottom.
-- **Widget mode** â€” a 160Ã—150 transparent window with just the orb. Reached with the minimise button (â€“) in the top bar. It can be **dragged anywhere** on screen, remembers where you left it, and expands back to the chat when you click it (or with the â¤¢ button that appears on hover).
+- **Full mode** — a 440×700 frosted-glass chat window, centred. Large orb on top, chat below, composer at the bottom.
+- **Widget mode** — a 160×150 transparent window with just the orb. Reached with the minimise button (–) in the top bar. It can be **dragged anywhere** on screen, remembers where you left it, and expands back to the chat when you click it (or with the ⤢ button that appears on hover).
+
+Switching between the two modes plays a screen-style animation (minimise: the orb sinks, the window shuts to a line and a point that flies to the orb's place and grows into the orb; opening: the same backwards, then the orb floats up). See section 23. In full mode the clock button in the top bar opens the **Chats sidebar** (section 20).
 
 ### Look and feel rules (do not break these)
 
 - **Monochrome only: black, white, grey, metal.** No coloured accents anywhere (the orb is a chrome sphere; state shows as brightness and pace, never hue).
-- **Never show technical terms to the user.** Tool rows say "Searching the web", "Checking Gmail", "Sending an email" â€” never tool names, server names, search-engine names or "MemoryLake". The system prompt also tells the model not to mention them.
+- **Never show technical terms to the user.** Tool rows say "Searching the web", "Checking Gmail", "Sending an email" — never tool names, server names, search-engine names or "MemoryLake". The system prompt also tells the model not to mention them.
 - Replies are Markdown, typed out character by character.
 
 ---
@@ -29,13 +31,14 @@ Two window modes:
 |---|---|
 | Shell | **Tauri 2** (Rust backend + system WebView2). Identifier `com.priyanshu-madhup.siri-orb`, product name `siri-orb`, window title "Leo". |
 | Frontend | **Vanilla TypeScript + Vite** (no UI framework). Plain DOM, CSS, one WebGL canvas. Vite dev server on **port 1420, strict**. |
-| Backend | Rust (edition 2021): `reqwest` (rustls), `tokio`, `serde`/`serde_json`, `chrono`, `regex`, `window-vibrancy` (acrylic blur), `tauri-plugin-opener`. |
-| LLM | **OpenRouter** (`https://openrouter.ai/api/v1/chat/completions`) â€” the only model provider. Chat and tool calling go through it. |
+| Backend | Rust (edition 2021): `reqwest` (rustls), `tokio`, `serde`/`serde_json`, `chrono`, `regex`, `window-vibrancy` (acrylic blur), `tauri-plugin-opener`, `tauri-plugin-updater`, `tauri-plugin-global-shortcut`, `rusqlite` (SQLite, bundled), `xcap` + `image` + `base64` (screen capture), `windows-sys` (one-call window moves). |
+| LLM | **OpenRouter** (`https://openrouter.ai/api/v1/chat/completions`) — the only model provider. Chat and tool calling go through it. |
 | Memory | **MemoryLake** REST API (`https://app.memorylake.ai/openapi/memorylake/api/v3`). |
 | Web search | **Tavily** (`https://api.tavily.com/search`). |
+| Storage | **SQLite** file `leo.db` for chat history (section 20), on the user's device only. |
 | Google | Community MCP server **`workspace-mcp@2.0.1`** run through `uvx` (needs `uv`/Python installed). |
 
-There is **no git repository** and no CI. The Rust build cache is redirected to `C:\Users\Priyanshu Madhup\.cargo-targets\siri-orb` because the `P:` drive is tiny (`.cargo/config.toml`).
+The project is a **git repository** (`origin` = GitHub `Priyanshu-Madhup/Leo-AI`, branch `main`); releases are built by GitHub Actions (section 16). The Rust build cache is redirected to `C:\Users\Priyanshu Madhup\.cargo-targets\siri-orb` because the `P:` drive is tiny (`.cargo/config.toml`).
 
 ---
 
@@ -62,12 +65,13 @@ Notes:
 - After changing **Rust**, the dev app must be restarted (`tauri dev` rebuilds). Frontend changes hot-reload.
 - A plain browser tab at `http://localhost:1420` shows the UI but **Tauri commands do not work** there (useful only for visual checks of CSS, markdown, the orb). A hidden browser tab pauses `requestAnimationFrame`, so animations must be driven manually when testing in an automated browser.
 - Tooling quirk in this environment: shell heredocs containing apostrophes can break; write helper scripts to a file and run them instead.
+- **Do not edit this file (or any UTF-8 file) with Windows PowerShell 5.1 `Get-Content` / `Set-Content`**: it reads UTF-8 as ANSI and saves it back double-encoded ("—" becomes "â€”"). Use an editor tool or Python with `encoding="utf-8"`. `Add-Content -Encoding utf8` to append is fine.
 
 ---
 
 ## 4. First-time setup (what the user must enter)
 
-Open the app â†’ âš™ (settings) in the top bar. A **Settings window** opens over the chat (close it with Ã—, Esc, or a click on the dimmed backdrop). It is also opened automatically the first time, or when you send a message without a key/model. Each section shows a connection status and a **"Get a key" link** that opens the right website in your browser. Key fields have an eye button to show/hide the key. **Save** stores the keys and model; the blur toggle and transparency slider apply instantly.
+Open the app → ⚙ (settings) in the top bar. A **Settings window** opens over the chat (close it with ×, Esc, or a click on the dimmed backdrop). It is also opened automatically the first time, or when you send a message without a key/model. Each section shows a connection status and a **"Get a key" link** that opens the right website in your browser. Key fields have an eye button to show/hide the key. **Save** stores the keys and model; the blur toggle and transparency slider apply instantly.
 
 | Section | Fields | Notes |
 |---|---|---|
@@ -75,47 +79,49 @@ Open the app â†’ âš™ (settings) in the top bar. A **Settings window** o
 | Long-term memory | MemoryLake API key (link: app.memorylake.ai) | Optional. The URL is **hardcoded** to `https://app.memorylake.ai` (no URL field). |
 | Web search | Tavily API key (link: app.tavily.com/home) | Optional. Without it `web_search` is not offered. |
 | Google | **Your Google account email** (stored as `leo.google.email`) | The Google tools act on the user's own account, so the backend needs their address (`mcp_set_inject`). The connection itself is configured in `mcp.json` (section 9); on a fresh install that file is written automatically (section 16). The Google Cloud app is published (In production), so any Google account can sign in. |
-| Appearance | Blur behind window, Window transparency (0â€“100%) | 0% = solid dark panel, 100% = only the blur/clear glass. Default 90%. |
+| Appearance | Blur behind window, Window transparency (0–100%) | 0% = solid dark panel, 100% = only the blur/clear glass. Default 90%. |
 
 No base URLs are ever asked for; only API keys. The status chips (AI model, memory, web search, Google) refresh whenever the window opens and after Save.
 
 ### Local storage keys (frontend, per WebView)
 
-`leo.openrouter.apiKey`, `leo.openrouter.model`, `leo.openrouter.plannerModel`, `leo.openrouter.verifierModel`, `leo.memorylake.apiKey`, `leo.tavily.key`, `leo.google.email`, `leo.mode` ("full"/"widget"), `leo.blur` ("1"/"0"), `leo.transparency` (0â€“100).
+`leo.openrouter.apiKey`, `leo.openrouter.model`, `leo.openrouter.plannerModel`, `leo.openrouter.verifierModel`, `leo.memorylake.apiKey`, `leo.tavily.key`, `leo.google.email`, `leo.mode` ("full"/"widget"), `leo.blur` ("1"/"0"), `leo.transparency` (0–100), `leo.shortcut` (global key combination), `leo.setupShown` (the first-launch flight has played), `leo.lastVersion` (last version whose What's new was shown, section 22).
 
 API keys live only in WebView local storage and in Rust memory at runtime. At startup the frontend pushes the MemoryLake and Tavily keys to Rust (`memory_configure`, `web_configure`) **only if non-empty**, so a reload can never switch them off; only an explicit Save can. The OpenRouter key and model are passed on every `agent_run` call.
 
 ### Files outside the project (Windows)
 
-- `%APPDATA%\com.priyanshu-madhup.siri-orb\mcp.json` â€” MCP server config (contains the Google OAuth client ID/secret: **secret, never share or commit**).
-- `%APPDATA%\com.priyanshu-madhup.siri-orb\servers\<name>\` â€” each MCP server's working directory (the Google server keeps its saved sign-in tokens here).
-- `%APPDATA%\com.priyanshu-madhup.siri-orb\widget-position.json` â€” where the minimised orb was last dropped (`{"x":â€¦,"y":â€¦}`, physical pixels).
+- `%APPDATA%\com.priyanshu-madhup.siri-orb\mcp.json` — MCP server config (contains the Google OAuth client ID/secret: **secret, never share or commit**).
+- `%APPDATA%\com.priyanshu-madhup.siri-orb\servers\<name>\` — each MCP server's working directory (the Google server keeps its saved sign-in tokens here).
+- `%APPDATA%\com.priyanshu-madhup.siri-orb\leo.db` — the chat history (SQLite, section 20). Contains the user's conversations: private.
+- `%APPDATA%\com.priyanshu-madhup.siri-orb\updater.log` — every update step and error.
+- `%APPDATA%\com.priyanshu-madhup.siri-orb\widget-position.json` — where the minimised orb was last dropped (`{"x":…,"y":…}`, physical pixels).
 
 ---
 
 ## 5. Architecture overview
 
 ```
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ WebView (TypeScript) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚ main.ts  chat, cards, tool rows, settings window, widget dragging         â”‚
-â”‚ orb.ts (WebGL)   markdown.ts   typewriter.ts   agent.ts (invoke/listen)   â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–²â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-        invoke  â”‚ commands                      â”‚ events "agent://event"
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚ Rust: the agents                                                          â”‚
-â”‚                                                                           â”‚
-â”‚   agent_run â”€â–¶ Orchestrator â”€â”¬â”€â–¶ Utility agent                            â”‚
-â”‚                (orchestrator.rs) â”‚   replies, web, memory, time, open apps â”‚
-â”‚                              â”œâ”€â–¶ Google agent â”€â”¬â”€ Gmail    Calendar        â”‚
-â”‚                              â”‚                 â”œâ”€ Contacts Drive           â”‚
-â”‚                              â”‚                 â””â”€ Docs Sheets Slides       â”‚
-â”‚                              â””â”€â–¶ Planner â”€â”€ steps â”€â”€â–¶ Utility / Google     â”‚
-â”‚                                   (planner.rs)  â–²                          â”‚
-â”‚                                     edits plan  â”‚ pass / fail              â”‚
-â”‚                                                 â””â”€â”€ Verifier (verifier.rs) â”‚
-â”‚                                                                           â”‚
-â”‚   shared: tools.rs Â· interact.rs (cards) Â· memory.rs Â· web.rs Â· mcp.rs     â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+┌────────────────────────── WebView (TypeScript) ──────────────────────────┐
+│ main.ts  chat, cards, tool rows, settings window, widget dragging         │
+│ orb.ts (WebGL)   markdown.ts   typewriter.ts   agent.ts (invoke/listen)   │
+└───────────────┬───────────────────────────────▲──────────────────────────┘
+        invoke  │ commands                      │ events "agent://event"
+┌───────────────▼───────────────────────────────┴──────────────────────────┐
+│ Rust: the agents                                                          │
+│                                                                           │
+│   agent_run ─▶ Orchestrator ─┬─▶ Utility agent                            │
+│                (orchestrator.rs) │   replies, web, memory, time, open apps │
+│                              ├─▶ Google agent ─┬─ Gmail    Calendar        │
+│                              │                 ├─ Contacts Drive           │
+│                              │                 └─ Docs Sheets Slides       │
+│                              └─▶ Planner ── steps ──▶ Utility / Google     │
+│                                   (planner.rs)  ▲                          │
+│                                     edits plan  │ pass / fail              │
+│                                                 └── Verifier (verifier.rs) │
+│                                                                           │
+│   shared: tools.rs · interact.rs (cards) · memory.rs · web.rs · mcp.rs     │
+└───────────────────────────────────────────────────────────────────────────┘
         MCP servers (child processes over stdio):  Google Workspace
 ```
 
@@ -125,24 +131,24 @@ API keys live only in WebView local storage and in Rust memory at runtime. At st
 
 | Agent | Role | Own tools | May call |
 |---|---|---|---|
-| **Utility** | Simple replies, web search and page reading, memory, date/time, opening apps/sites | `current_datetime`, `web_search`, `fetch_page`, `open_url`, `open_app` | nobody |
-| **Google** | Coordinates all Google Workspace work; has **no Google tools itself** | â€“ | the 7 sub-agents + utility |
+| **Utility** | Simple replies, reading web pages, opening apps/sites (plus the shared tools below) | `fetch_page`, `open_url`, `open_app` | nobody |
+| **Google** | Coordinates all Google Workspace work; has **no Google tools itself** | – | the 7 sub-agents + utility |
 | **Gmail** | search/read mail, send email | 4 Gmail tools | utility |
 | **Calendar** | list calendars, read/create/change events | 3 | utility |
 | **Contacts** | look up and manage contacts | 4 | utility |
 | **Drive** | find/read/create/update files, share links, move to trash | 7 | utility |
 | **Docs** / **Sheets** / **Slides** | read, create, edit | 4 / 4 / 3 | utility |
 
-Every agent also has `ask_user`, `recall_memory` and `remember` (**the memory tool is available to all**). Calling another agent is a tool call named `ask_<agent>` (e.g. `ask_gmail`, `ask_utility`) that runs that agent's own loop and returns its answer. **There are no cycles by construction**: the utility agent calls nobody; sub-agents call only the utility agent; Google calls its sub-agents and utility; depth is also capped at 3. An agent is *offered* only its own tools and a call to anything else is refused (`AgentId::allows`). Unit tests in `agents.rs` enforce the hierarchy, the tool scoping and that each of the 29 Google tools has exactly one owner.
+Every agent also has these shared tools: `ask_user`, `look_at_screen` (section 18), `web_search`, `current_datetime`, `get_location` (the last two read the shared session store, section 19), `recall_memory` and `remember`. Calling another agent is a tool call named `ask_<agent>` (e.g. `ask_gmail`, `ask_utility`) that runs that agent's own loop and returns its answer. **There are no cycles by construction**: the utility agent calls nobody; sub-agents call only the utility agent; Google calls its sub-agents and utility; depth is also capped at 3. An agent is *offered* only its own tools and a call to anything else is refused (`AgentId::allows`). Unit tests in `agents.rs` enforce the hierarchy, the tool scoping and that each of the 34 Google tools has exactly one owner.
 
 ### The roles that are not tool-using agents
 
 - **Orchestrator** (`orchestrator.rs`): one short model call classifies the latest request into a route: `utility` (answer or do it in one go), `google` (ONE clear Google job with everything needed in the message), or `plan` (several steps where a later step needs an earlier result, or services are combined; e.g. "email Priya the report", "what's the weather" which first needs the user's city from memory). If Google isn't connected it never routes there; if routing fails it chooses `plan`.
-- **Planner** (`planner.rs`): writes the raw plan (â‰¤ 6 steps; each step = which agent, a self-contained task, and the `expected` result), runs the steps one at a time, and **edits the remaining steps** when needed (see Â§6). It can hand any step to the utility agent, which is how other agents get web data.
+- **Planner** (`planner.rs`): writes the raw plan (≤ 6 steps; each step = which agent, a self-contained task, and the `expected` result), runs the steps one at a time, and **edits the remaining steps** when needed (see §6). It can hand any step to the utility agent, which is how other agents get web data.
 - **Verifier** (`verifier.rs`): sees only ONE step: its task, its `expected` result, the agent's answer and a log of the tools that really ran. It never sees the rest of the plan. Returns `{pass, reason, replan}`. A verifier error never blocks a job (the step is accepted).
 
 ### Models
-Everything uses the main model by default. Settings â†’ AI model â†’ *Advanced* has optional **Planner model** and **Checker model** fields (`leo.openrouter.plannerModel` / `verifierModel`); blank means "main". The router, final-answer writer and all agents use the main model.
+Everything uses the main model by default. Settings → AI model → *Advanced* has optional **Planner model** and **Checker model** fields (`leo.openrouter.plannerModel` / `verifierModel`); blank means "main". The router, final-answer writer and all agents use the main model.
 
 ---
 
@@ -150,21 +156,21 @@ Everything uses the main model by default. Settings â†’ AI model â†’ *
 
 1. **Input**: the user types in the composer (`sendMessage`). If a question/approval card is waiting, the text **answers the card** instead of starting a turn.
 2. Frontend adds the user bubble, shows the typing dots, sets the orb to *thinking*, calls **`agent_run(apiKey, model, plannerModel, verifierModel, text)`**.
-3. **`agent_run`** bumps the turn counter (cancelling any older run), builds the shared `Ctx` (models, cancel flag, "tainted" flag, tool log, saved-facts list) and asks the **orchestrator** for a route.
+3. **`agent_run`** bumps the turn counter (cancelling any older run), makes sure the conversation has a saved chat row (the first message creates it and starts the background naming call, section 20), builds the shared `Ctx` (models, cancel flag, "tainted" flag, tool log, saved-facts list, steps summary seeded from the chat's saved one) and asks the **orchestrator** for a route.
 4. **Route `utility` / `google`**: that agent runs its loop on the conversation so far and its final text is the reply.
 5. **Route `plan`** (`planner::run_job`):
    1. The planner writes the plan. If no usable plan comes back, the utility agent just handles the request.
    2. For each step: the agent gets the overall request, the **verified results of earlier steps**, and its own task (never the later steps or the expected result).
-   3. The **verifier** checks that step. **Pass** â†’ next step. **Fail** â†’ retry up to 2 times with the verifier's reason as feedback, **unless the step already changed something** (an approved write), in which case it is not repeated.
+   3. The **verifier** checks that step. **Pass** → next step. **Fail** → retry up to 2 times with the verifier's reason as feedback, **unless the step already changed something** (an approved write), in which case it is not repeated.
    4. If a step still fails, or the verifier flags `replan`, the planner **rewrites the remaining steps** from what actually happened (finished work is never redone). At most **2 plan edits** per request; then the job stops and the final reply says what was done and what wasn't.
    5. A final model call writes the user-facing answer from the verified results.
-6. **Inside every agent loop** (`agent::run_agent`, â‰¤ 8 rounds): build prompt (role + memory section if MemoryLake is set + web section for the utility agent) â†’ call OpenRouter (retries) â†’ if the reply has no tool calls it is the answer (an empty reply is nudged once, then a polite fallback) â†’ otherwise for each tool call: refuse it if the agent isn't allowed it; refuse **cut-off arguments before anything is shown** (Â§13); `ask_user` â†’ question card; `ask_<agent>` â†’ run that agent; otherwise approval card if needed, then execute, emit `tool_start`/`tool_result`, and feed the result back.
+6. **Inside every agent loop** (`agent::run_agent`, ≤ 8 rounds): build prompt (role + memory section if MemoryLake is set + web section for the utility agent) → call OpenRouter (retries) → if the reply has no tool calls it is the answer (an empty reply is nudged once, then a polite fallback) → otherwise for each tool call: refuse it if the agent isn't allowed it; refuse **cut-off arguments before anything is shown** (§13); `ask_user` → question card; `ask_<agent>` → run that agent; otherwise approval card if needed, then execute, emit `tool_start`/`tool_result`, and feed the result back.
 7. The reply returns to the frontend: shown as Markdown and **typed out** while the orb ripples to the rhythm of the text. The conversation history stores only the user's messages and Leo's final replies (tool traffic stays inside the run).
-8. **Memory pass** (reflection.rs) runs in the background (see Â§10), told which facts were already saved.
+8. **Memory pass** (reflection.rs) runs in the background (see §10), told which facts were already saved.
 
 **Cancellation:** `agent_cancel` bumps the turn counter; every loop, the planner and card waits notice at their next checkpoint and return `"cancelled"`, which the frontend ignores. The frontend calls it when a new message is sent while one is running.
 
-**Conversation memory vs. long-term memory:** the in-process history (last 40 messages) is lost on restart or **New chat**. Long-term facts live in MemoryLake.
+**Conversation memory vs. long-term memory:** the in-process history (last 40 messages) and rolling summary are rebuilt from the saved chat when it is reopened (section 20); **New chat** starts a fresh one. Long-term facts live in MemoryLake. The request time limit is 10 minutes (time spent waiting for the user does not count).
 
 ---
 
@@ -172,10 +178,10 @@ Everything uses the main model by default. Settings â†’ AI model â†’ *
 
 | File | Responsibility |
 |---|---|
-| `lib.rs` | Tauri setup; command registration; window modes (`set_mode`), acrylic glass (`set_glass`, `set_blur`), transparent-window handling, **widget position persistence and clamping**; window-event hook that tracks the orb's position. |
+| `lib.rs` | Tauri setup; command registration; window modes (`set_mode`, `apply_mode`), acrylic glass (`set_glass`, `glass_off`, `glass_on`, `set_blur`), **widget position persistence and clamping**, the window-event hook that tracks the orb's position, and the window flights of the minimise/open animations (`fly_to_orb`, `fly_to_center`, `move_window` = one `SetWindowPos` call). |
 | `main.rs` | Calls `siri_orb_lib::run()`. |
 | `build.rs` | Tauri build + `rerun-if-env-changed` for the baked-in Google client (section 16). |
-| `agent.rs` | The engine: `Ctx` (per-request shared state), **`run_agent`** (the one tool loop all agents use), delegation, approval/argument checks, `agent_run/agent_cancel/agent_reset`, `AgentEvent`, `tool_start()`. |
+| `agent.rs` | The engine: `Ctx` (per-request shared state), **`run_agent`** (the one tool loop all agents use), delegation, approval/argument checks (cut-off JSON, unfinished Docs text, Docs approval once per document, duplicate document titles), `agent_run/agent_cancel/agent_reset`, the chat-history commands, `AgentEvent`, `tool_start()`. |
 | `agents.rs` | The registry: `AgentId`, each agent's tools, who may call whom, delegation tool schemas, **all role prompts**. |
 | `orchestrator.rs` | Routing call (`utility` / `google` / `plan`). |
 | `planner.rs` | Plan creation, step running with retries, plan revision, final answer. |
@@ -189,20 +195,30 @@ Everything uses the main model by default. Settings â†’ AI model â†’ *
 | `openrouter.rs` | Shared HTTP client, `post_chat` with retry/backoff. |
 | `types.rs` | `ChatMessage`, `ToolCall`, `FunctionCall` (OpenAI-format messages). |
 | `updater.rs` | Silent self-update on launch (section 16). |
+| `vision.rs` | `look_at_screen`: in-memory screenshot, analysed by the vision model (section 18). |
+| `session.rs` | `SessionInfo`: the date/time clock and IP location shared by all agents (section 19). |
+| `history.rs` | SQLite chat history and the model-written chat names (section 20). |
+| `summary.rs` | Rolling chat summary (see section 17). |
 
-### Tauri commands (frontend â†’ Rust)
+### Tauri commands (frontend → Rust)
 
 | Command | Args | Purpose |
 |---|---|---|
 | `agent_run` | `apiKey, model, plannerModel?, verifierModel?, text` | Run one request through the orchestrator; returns the reply text. |
-| `agent_cancel` | â€“ | Cancel the running turn. |
-| `agent_reset` | â€“ | Cancel and clear history (New chat). |
+| `agent_cancel` | – | Cancel the running turn. |
+| `agent_reset` | – | Cancel and clear history (New chat). |
 | `agent_answer` | `id, payload` | Answer a card. Ask: `{text}`. Approval: `{allow, note?}`. |
-| `memory_configure` / `memory_is_configured` | `apiKey` / â€“ | Set/read the MemoryLake key (the URL is a constant in `memory.rs`). |
-| `web_configure` / `web_is_configured` | `apiKey` / â€“ | Set/read Tavily key. |
-| `mcp_status` | â€“ | List MCP servers with state (`starting`/`ready`/`error`) and, if a required setting is missing, `needs` (e.g. `user_google_email`). |
+| `memory_configure` / `memory_is_configured` | `apiKey` / – | Set/read the MemoryLake key (the URL is a constant in `memory.rs`). |
+| `web_configure` / `web_is_configured` | `apiKey` / – | Set/read Tavily key. |
+| `mcp_status` | – | List MCP servers with state (`starting`/`ready`/`error`) and, if a required setting is missing, `needs` (e.g. `user_google_email`). |
 | `mcp_set_inject` | `key, value` | Set a value that fills an `inject` entry (the user's Google email). Wins over the file; empty removes it. |
-| `set_mode` | `mode: "full"\|"widget"` | Resize/reposition the window, toggle glass and taskbar entry. |
+| `set_mode` | `mode: "full"\|"widget"`, `quiet?` | Resize/reposition the window, toggle glass and taskbar entry. `quiet` (opening animation) resizes and centres in one call and leaves blur/shadow off. |
+| `glass_off` / `glass_on` | – | Blur and shadow off before the minimise animation / on after the open animation (`glass_off` leaves the `FULL_VIEW` flag alone). |
+| `fly_to_orb` / `fly_to_center` | – | Move the full-size window so the bright point goes to the orb's place / to the middle of the screen (section 23). |
+| `screen_prepared` | – | The frontend tells Rust it has shrunk to the orb, so the screenshot can be taken (section 18). |
+| `history_list` / `history_current` | – | Saved chats, newest first / the open chat's id. |
+| `history_open` / `history_delete` | `id` | Reopen a chat (returns its messages and restores both summaries) / delete one chat. |
+| `set_shortcut` / `check_for_updates` | `shortcut` / – | Global shortcut; manual update check. |
 | `set_blur` | `enabled` | Acrylic blur on/off. |
 
 ### Event to the frontend: `agent://event`
@@ -213,17 +229,22 @@ Tagged by `kind` (snake_case):
 - `tool_result { id, name, ok, error? }`
 - `ask_user { id, question, options: [{label, description?}] }`
 - `approval_request { id, name, label, args }`
+- `delta { text }`, `delta_reset`, `progress { text }` (streamed reply text and status line)
+
+Other events: `screen://prepare` / `screen://done` (screenshot shrink and reopen), `history://titled { id, title }` (a chat got its name), `shortcut://pressed`, `app://updating`, `app://update-failed`.
 
 ### Built-in tools (what the model can call)
 
 | Tool | Needs | Notes |
 |---|---|---|
-| `ask_user` | â€“ | Question card with option buttons + free text. For ambiguity ("which Priya?"). |
-| `current_datetime` | â€“ | Local date/time/zone. |
-| `open_url` | â€“ | http/https only, opened in the default browser. |
-| `open_app` | â€“ | Matches Start Menu shortcuts by name and opens by path (never through a shell). |
-| `web_search` | Tavily key | Returns a summary plus titles/links/snippets. Optional `topic: "news"`. |
-| `fetch_page` | â€“ | Reads a public page as text (truncated). Refuses localhost/private/link-local addresses, checks every redirect hop, 1.5 MB / 6,000-char caps. |
+| `ask_user` | – | Question card with option buttons + free text. For ambiguity ("which Priya?"). |
+| `current_datetime` | – | Local date, time and zone, read from the shared session clock (section 19). Offered to every agent. |
+| `get_location` | – | Approximate city/region/country/time zone from the IP address, looked up once per session and shared (section 19). Offered to every agent. |
+| `look_at_screen` | image-capable model | Screenshot analysed by the vision model; returns a detailed description (section 18). Offered to every agent. |
+| `open_url` | – | http/https only, opened in the default browser. |
+| `open_app` | – | Matches Start Menu shortcuts by name and opens by path (never through a shell). |
+| `web_search` | Tavily key | Returns a summary plus titles/links/snippets. Optional `topic: "news"`. Offered to every agent (limit 5 per request). |
+| `fetch_page` | – | Reads a public page as text (truncated). Refuses localhost/private/link-local addresses, checks every redirect hop, 1.5 MB / 6,000-char caps. |
 | `recall_memory` | MemoryLake | Search facts/documents. |
 | `remember` | MemoryLake | Save one fact. |
 
@@ -231,10 +252,11 @@ Plus every MCP tool, named `<server>__<tool>` (e.g. `google__search_gmail_messag
 
 ### Safety rules in the agent loop
 
-- **Approval cards** are required for: every **MCP tool not marked read-only** (`readOnlyHint` annotation), and â€” once the turn has read untrusted content ("tainted") â€” the built-in side-effect tools `open_url`, `open_app`, `remember`.
-- **Tainted** = a tool that returns text written by others has run this turn: `web_search`, `fetch_page`, any MCP tool.
+- **Approval cards** are required for: every **MCP tool not marked read-only** (`readOnlyHint` annotation), and — once the turn has read untrusted content ("tainted") — the built-in side-effect tools `open_url`, `open_app`, `remember`.
+- **Tainted** = a tool that returns text written by others has run this turn: `web_search`, `fetch_page`, `look_at_screen` (text on the screen is not trusted either), any MCP tool.
 - Tool results and web/email text are **untrusted data**; the prompts tell the model never to follow instructions found in them.
-- There is **no "always allow"** yet; every approval asks.
+- There is **no "always allow"** yet; every approval asks. Typing "I approve, don't ask again" in a message does not skip cards. The one exception: once a Google document has been approved (created, or first edited) in a request, further edits to that same document in that request do not ask again (section 21).
+- Docs tool calls whose text ends in an ellipsis are refused before any card, and a second create with the same title in one request is refused (section 21).
 - The page reader is hardened against local-network access (SSRF).
 - Questions/approvals time out after 10 minutes.
 
@@ -244,20 +266,21 @@ Plus every MCP tool, named `<server>__<tool>` (e.g. `google__search_gmail_messag
 
 | File | Responsibility |
 |---|---|
-| `main.ts` (~690 lines) | Everything UI. Sections in order: element lookups, keys/transparency/blur â†’ orb state â†’ **window mode** (`setMode`) â†’ **chat transcript** (`addMessage`, typing dots, `followEnd`) â†’ **question/approval cards** â†’ **tool progress rows** (logos) â†’ **settings window** (`openSettings`, `refreshStatus`, Save) â†’ **sending** (`sendMessage`) â†’ **dragging the minimised orb** â†’ start-up. |
+| `main.ts` (~1,400 lines) | Everything UI. Sections in order: element lookups, keys/transparency/blur → orb state → **window mode** (`setMode`) → **chat transcript** (`addMessage`, typing dots, `followEnd`) → **question/approval cards** → **tool progress rows** (logos) → **settings window** (`openSettings`, `refreshStatus`, Save) → **sending** (`sendMessage`) → **dragging the minimised orb** → **chat history sidebar** → **What's new** → the minimise/open animation sequences (`playMinimize`, `playMaximize`, `setMode`) → start-up. |
 | `agent.ts` | `AgentClient` (`ask`, `cancel`, `reset`), event types, `answerCard`, `onAgentEvent`. |
 | `orb.ts` | `SiriOrb`: WebGL raymarched chrome sphere. States `idle | thinking | speaking` (speaking = the reply is being written out); each has tones, speed, glow and **ripple** strength. Smooth, frame-rate-independent easing; travelling ripple waves (strongest while generating), gentle breathing when idle. `setHover(true)` (the canvas `pointerenter`/`pointerleave`) lifts ripple, pace and glow to a lively level for as long as the pointer is over the orb. `setState`, `setLevel(0..1)`. |
+| `changelog.ts` | The What's new entries (`RELEASES`), version comparison, the general bug-fix line (section 22). |
 | `markdown.ts` | Safe Markdown renderer (builds DOM nodes, never `innerHTML`; only http(s) links). |
-| `typewriter.ts` | `typewrite(el, onTick, onDone)`: reveals a rendered message character by character (~120 chars/s, speeds up so long replies finish in â‰¤3.5 s, eases in, short sentence pauses, blinking caret, blocks fade in). Respects reduced-motion. |
+| `typewriter.ts` | `typewrite(el, onTick, onDone)`: reveals a rendered message character by character (~120 chars/s, speeds up so long replies finish in ≤3.5 s, eases in, short sentence pauses, blinking caret, blocks fade in). Respects reduced-motion. |
 | `styles.css` | All styling. CSS variables: `--ink`, `--glass` (set live by the transparency slider), `--tint`, `--metal`, etc. |
-| `assets/logos/` | Brand logos (see Â§11). |
+| `assets/logos/` | Brand logos (see §11). |
 | `vite-env.d.ts` | Vite client types (needed for `import.meta.glob`). |
-| `../index.html` | Static layout: top bar, orb, caption, chat + composer, settings panel. |
+| `../index.html` | Static layout: top bar, orb, caption, chat + composer, settings panel, Chats sidebar, What's new panel, the `#flash` point used by the animations. |
 
 ### Cards (question and approval)
 
 - **Ask card**: question, option chips (with optional description), "or type your own answer". Answer sent as `{text}`.
-- **Approval card**: title ("Send this email?" if args look like an email), a table of the arguments (free-text fields like `body`/`content` get a tall box), **Send/Allow** (focused so Enter confirms), **Decline**, and "or say what to change" (decline with a note so the model revises). Typing "yes/ok/send itâ€¦" allows; "no/cancelâ€¦" declines; anything else declines with that text as the note.
+- **Approval card**: title ("Send this email?" if args look like an email), a table of the arguments (free-text fields like `body`/`content` get a tall box), **Send/Allow** (focused so Enter confirms), **Decline**, and "or say what to change" (decline with a note so the model revises). Typing "yes/ok/send it…" allows; "no/cancel…" declines; anything else declines with that text as the note.
 
 ### Tool progress rows
 
@@ -293,9 +316,9 @@ Each tool call is a row: a white disc with the brand logo (or a neutral icon) an
 
 - `inject`: arguments filled on **every call** and hidden from the model's view of the schema (the Google tools all require `user_google_email`). A non-empty value typed in Settings (`mcp_set_inject`) overrides the file; an empty value with no override makes the tool return "Add your Google account email in settings first."
 - `tools_allow`: optional whitelist; the server runs the large `extended` tier (63 tools) but Leo exposes only **29** (the core set plus `update_drive_file`).
-- Tool approval comes from each tool's `readOnlyHint` annotation (`false`/missing â‡’ approval card).
+- Tool approval comes from each tool's `readOnlyHint` annotation (`false`/missing ⇒ approval card).
 - **Sign-in**: an unauthorised call returns a Google link; `mcp.rs` opens links starting with `https://accounts.google.com/` in the browser itself and tells the model to ask the user to approve. The OAuth client is a **Desktop** client in a Google Cloud project with the Gmail, Calendar, Drive, Docs, Sheets, Slides and People/Contacts **APIs** enabled and the user as a test user. In Testing mode, refresh tokens expire after about 7 days (re-sign-in).
-- **Google capabilities now**: read/search Gmail and send mail; read/create/update Calendar events and contacts; Drive search/read/create/update (including **moving to trash** via `update_drive_file` with `trashed: true` â€” there is **no permanent delete tool**); create/edit Docs; read/write Sheets; create Slides. The model is told to confirm which file before trashing and to say "moved to trash", never "deleted".
+- **Google capabilities now**: read/search Gmail and send mail; read/create/update Calendar events and contacts; Drive search/read/create/update (including **moving to trash** via `update_drive_file` with `trashed: true` — there is **no permanent delete tool**); create/edit Docs; read/write Sheets; create Slides. The model is told to confirm which file before trashing and to say "moved to trash", never "deleted".
 - Google's own hosted MCP servers (`*mcp.googleapis.com`) were evaluated and **not used**: they need the Workspace Developer Preview Program (a Workspace account, not personal Gmail), a Web OAuth client and streamable-HTTP + OAuth support in the client, and offer fewer tools.
 
 To add another MCP server: add an entry to `mcp.json` (stdio command + args + env), restart the app; its tools appear as `<name>__<tool>`. Consider `tools_allow` to keep the tool list small, and add friendly titles/brands in `tools::present()` (otherwise it shows "Working on it").
@@ -305,8 +328,8 @@ To add another MCP server: add an entry to `mcp.json` (stdio command + args + en
 ## 10. Memory (MemoryLake)
 
 - Concepts: a **workspace** (the account's default), an **actor** (the key owner's HUMAN actor), a **project** `leo-memory` (created on first use), and **conversations**. Facts are stored per project, so they outlive any one conversation.
-- **Writing**: `remember` appends a message to a conversation; MemoryLake extracts facts asynchronously (â‰ˆ15â€“20 s until searchable). The API only allows appending to the current head message, so **each app session creates its own conversation** (`leo-<unix-nanos>`) and chains messages by `parent_message_id` (first message: `null`). On an append error it starts a fresh conversation once.
-- **Reading**: `recall` â†’ `POST /workspaces/{id}/memories/search {query, top_k: 8}`. Facts saved in the last **10 minutes** are also kept in a local list and appended to every recall as "Just saved (still being indexed)", so a lookup right after saving works.
+- **Writing**: `remember` appends a message to a conversation; MemoryLake extracts facts asynchronously (≈15–20 s until searchable). The API only allows appending to the current head message, so **each app session creates its own conversation** (`leo-<unix-nanos>`) and chains messages by `parent_message_id` (first message: `null`). On an append error it starts a fresh conversation once.
+- **Reading**: `recall` → `POST /workspaces/{id}/memories/search {query, top_k: 8}`. Facts saved in the last **10 minutes** are also kept in a local list and appended to every recall as "Just saved (still being indexed)", so a lookup right after saving works.
 - **Tools only exist when a key is set**, and the memory section of the system prompt is only sent then.
 - **After-reply memory pass** (`reflection.rs`): after **every** exchange a background call (same model, max 4 steps, only `recall_memory`/`remember`) decides what to save: durable facts about the user, corrections (supersede old facts), written as first-person sentences; never secrets, small talk, or anything that came from email/files/web. If the turn was **tainted**, the assistant's reply is withheld from this pass (only the user's own words are shown). It is told which facts were already saved mid-turn. Its tool rows ("Checking memory", "Saving to memory") appear in the chat after the reply.
 
@@ -331,7 +354,7 @@ The Rust side decides the keys (`Brand { keys[], icon }` in `tools::present`); t
 - **Add an MCP server / Google capability**: edit `mcp.json` (args/permissions/`tools_allow`); update `google_presentation` in `tools.rs` for friendly titles; add logo files.
 - **Add a setting**: add a field (with its "Get a key" link if it is a key) to a group in the `#settings` window in `index.html`, key constant + `fillSettings` + Save in `main.ts`, and (if Rust needs it) a `*_configure` command like `memory_configure`. Remember "startup pushes only non-empty values".
 - **Change the model's behaviour**: edit the prompt constants in `agent.rs`. Memory/web text is appended conditionally.
-- **Change the orb**: `orb.ts` â€” per-state numbers in `STATE_STYLE`, shader in `FRAGMENT_SRC`.
+- **Change the orb**: `orb.ts` — per-state numbers in `STATE_STYLE`, shader in `FRAGMENT_SRC`.
 - **Change typing speed**: `BASE_CHARS_PER_SECOND` and `MAX_SECONDS` in `typewriter.ts`.
 - **Change glass strength**: acrylic tint alpha in `set_glass` (`lib.rs`), CSS `--glass` / transparency slider default in `main.ts`.
 
@@ -341,7 +364,7 @@ The Rust side decides the keys (`Brand { keys[], icon }` in `tools::present`); t
 
 - **"Thinking" models and short calls**: models like `qwen/qwen3.7-flash` spend a small token budget entirely on hidden reasoning and return an empty answer, which made routing and planning fail ("the model did not return JSON") and requests hang on "Thinking". The short structured calls (routing, planning, checking, the final write-up) now go through `openrouter::quick_chat`: first with `"reasoning": {"enabled": false}`, and if the answer is empty or the model refuses that setting, again with a 4x larger budget. If planning still fails, the whole request goes to the Google agent when Google is connected (it can also reach the utility agent), otherwise to the utility agent.
 
-- **Cut-off tool calls**: a long tool call (e.g. a whole document) used to be truncated by the 1,024-token reply limit, producing broken JSON ("Bad arguments") that still reached the approval card and was retried. Now agent replies get **4,096 tokens**, and every tool call's arguments are validated **before** any approval card; a cut-off call is rejected with an instruction to send less per call (the Docs agent is told to write long documents in parts of â‰¤ ~1,500 words). See `agent::arguments_are_valid`.
+- **Cut-off tool calls**: a long tool call (e.g. a whole document) used to be truncated by the 1,024-token reply limit, producing broken JSON ("Bad arguments") that still reached the approval card and was retried. Now agent replies get **4,096 tokens**, and every tool call's arguments are validated **before** any approval card; a cut-off call is rejected with an instruction to send less per call (the Docs agent is told to write long documents in parts of ≤ ~1,500 words). See `agent::arguments_are_valid`.
 
 - `post_chat` retries up to 3 times on 429/5xx (also when a 200 body carries an error code), honouring `Retry-After` (max 8 s). The limit is usually the model **provider's shared capacity**, not the OpenRouter account. If a cheap model keeps rate-limiting, choose another model.
 - Empty model replies: nudged once, then a fallback message ("I couldn't work out how to do that with the tools I have.").
@@ -357,11 +380,11 @@ The Rust side decides the keys (`Brand { keys[], icon }` in `tools::present`); t
 
 ## 14. Status
 
-**Built and working**: orb + full/widget modes (drag, remembered position), glass window with blur and a transparency slider, a Settings window with key links and status, text chat with Markdown + typewriter, the multi-agent system (orchestrator, planner, verifier, utility agent, Google agent with 7 sub-agents), question/approval cards, MCP client + Google Workspace (Gmail, Calendar, Drive, Docs, Sheets, Slides, Contacts), MemoryLake memory with after-reply memory pass, Tavily web search + safe page reader, brand-logo rows, retries.
+**Built and working**: orb + full/widget modes (drag, remembered position), glass window with blur and a transparency slider, a Settings window with key links and status, text chat with Markdown + typewriter, the multi-agent system (orchestrator, planner, verifier, utility agent, Google agent with 7 sub-agents), question/approval cards, MCP client + Google Workspace (Gmail, Calendar, Drive, Docs, Sheets, Slides, Contacts), MemoryLake memory with after-reply memory pass, Tavily web search + safe page reader, brand-logo rows, retries, streaming replies, global shortcut, silent updates, screen vision, shared date/time/location, SQLite chat history with a sidebar and model-written names, What's new notes, and the screen-style minimise/open animations.
 
-**Not built yet**: "always allow" for approvals; browser-control and filesystem MCP servers; streaming replies; a settings UI for MCP servers (config is a file); a forget-memory tool; Google tokens refresh handling beyond the 7-day Testing-mode limit.
+**Not built yet**: "always allow" for approvals (or an opt-in auto-approve for Google Docs writes); browser-control and filesystem MCP servers; a settings UI for MCP servers (config is a file); a forget-memory tool; search/export of chat history; Google token refresh handling beyond the 7-day Testing-mode limit.
 
-**Known limits**: personal-account Google hosted MCP not usable; Drive cannot permanently delete; web search needs a Tavily key; blur may stutter when dragging on some Windows builds; logo files must be named as in Â§11.
+**Known limits**: personal-account Google hosted MCP not usable; Drive cannot permanently delete; web search needs a Tavily key; blur may stutter when dragging on some Windows builds; `look_at_screen` needs a model that accepts images; the location is only approximate (from the IP address); the animations have been checked in a browser but their feel depends on the GPU; logo files must be named as in §11.
 
 ---
 
@@ -369,7 +392,7 @@ The Rust side decides the keys (`Brand { keys[], icon }` in `tools::present`); t
 
 - Voice (microphone, wake word, transcription, speech output) was **removed entirely** from the codebase; do not reintroduce it without being asked.
 - Never put API keys in source or commit them. Keys live in local storage / `mcp.json` only. If a key has been pasted anywhere, **rotate it**.
-- `mcp.json` holds the Google OAuth client secret â€” keep it private.
+- `mcp.json` holds the Google OAuth client secret — keep it private.
 - Do not widen auto-approval: MCP write tools and tainted side effects must keep asking.
 - Keep `fetch_page` local-network blocking and redirect checking intact.
 - Keep Markdown rendering DOM-based (no `innerHTML` with model/web text).
@@ -385,12 +408,12 @@ The Rust side decides the keys (`Brand { keys[], icon }` in `tools::present`); t
 Leo's icon is the glass tile with the chrome orb. The original artwork is `src/assets/logos/leo-app-icon.png` (kept out of the bundled tool-row logos by an exclusion in the `import.meta.glob` in `main.ts`). It was cropped tighter and given a rounded-square silhouette so it stays readable at 16-32 px, saved as `src-tauri/icons/app-icon-source.png` (1024x1024), and expanded with `npx tauri icon src-tauri/icons/app-icon-source.png` into everything in `src-tauri/icons/` (the `.ico` holds 16-256 px). The `android/` and `ios/` sets that command also creates are deleted because Leo is Windows-only. Tauri uses these icons for the installer, the exe, the taskbar and the window.
 
 ### Silent self-update (`updater.rs`, plugin `tauri-plugin-updater`)
-At every launch of a **release** build (never in `tauri dev`), a background task asks `https://github.com/Priyanshu-Madhup/Leo-AI/releases/latest/download/latest.json` whether a newer version exists (15 s timeout; failures are only logged). If so it emits `app://updating` (the UI shows "Updating Leoâ€¦"), downloads the signed installer, runs it quietly (`plugins.updater.windows.installMode: "quiet"`), and restarts the app. Updates are verified against the public key in `tauri.conf.json` (`plugins.updater.pubkey`). The matching **private key** lives outside the repo (`%USERPROFILE%\.tauri\leo-updater.key`) and in the GitHub secret `TAURI_SIGNING_PRIVATE_KEY`. **If that key is lost, installed apps can never update again** (they would need a new manual install with a new public key).
+At every launch of a **release** build (never in `tauri dev`), a background task asks `https://github.com/Priyanshu-Madhup/Leo-AI/releases/latest/download/latest.json` whether a newer version exists (15 s timeout; failures are only logged). If so it emits `app://updating` (the UI shows "Updating Leo…"), downloads the signed installer, runs it quietly (`plugins.updater.windows.installMode: "quiet"`), and restarts the app. Updates are verified against the public key in `tauri.conf.json` (`plugins.updater.pubkey`). The matching **private key** lives outside the repo (`%USERPROFILE%\.tauri\leo-updater.key`) and in the GitHub secret `TAURI_SIGNING_PRIVATE_KEY`. **If that key is lost, installed apps can never update again** (they would need a new manual install with a new public key).
 
 ### Release pipeline (`.github/workflows/release.yml`)
 Trigger: every push to `main` (and manual dispatch). The workflow reads `version` from `src-tauri/tauri.conf.json`; **if a tag `v<version>` already exists it stops**, so only a version bump produces a release. Otherwise it: sets up Node/Rust, downloads **uv** into `src-tauri/resources/uv.exe`, runs `npm ci`, and runs `tauri-apps/tauri-action`, which builds the installer, signs the update, creates the GitHub release `v<version>` and uploads the installer, the `.sig` and `latest.json`.
 
-**To ship a new version:** raise `version` in `tauri.conf.json` (keep `package.json` and `Cargo.toml` in step), commit, push to `main`.
+**To ship a new version:** (1) add an entry at the top of `RELEASES` in `src/changelog.ts` (features only, section 22); (2) raise the version in `src-tauri/tauri.conf.json`, `package.json`, `package-lock.json` (lines 3 and 9) and `src-tauri/Cargo.toml` (`Cargo.lock` follows on the next build); (3) run `npx tsc --noEmit` and `cargo test`; (4) commit and push to `main`. The workflow then builds and publishes the release.
 
 GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (empty if none), `LEO_GOOGLE_CLIENT_ID` and `LEO_GOOGLE_CLIENT_SECRET` (optional).
 
@@ -408,17 +431,17 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 
 ## 17. Additions since 2.1.0 (summary)
 
-- **Global shortcut** (Settings â†’ Shortcut): `set_shortcut` registers one system-wide key combination (stored as `leo.shortcut`). Pressing it shows Leo and toggles between the orb widget and the full chat (event `shortcut://pressed`).
+- **Global shortcut** (Settings → Shortcut): `set_shortcut` registers one system-wide key combination (stored as `leo.shortcut`). Pressing it shows Leo and toggles between the orb widget and the full chat (event `shortcut://pressed`).
 - **Streaming**: `openrouter::post_chat_stream` reads the SSE stream; for `utility`/`google` routes `run_agent` emits `delta` events (and `delta_reset` if the model then calls a tool) and the frontend draws the reply live. Plan jobs are not streamed.
 - **Prompt caching**: `openrouter::cache_system_prompt` marks system prompts `cache_control: ephemeral` (Qwen needs this). `LEO_TRACE=1` prints cached tokens.
-- **Chat summary** (`summary.rs`): from 10 messages on, older turns are folded into a rolling summary (â‰¤1000 words); the model sees summary + last exchange + new message. Cleared by New chat.
+- **Chat summary** (`summary.rs`): from 10 messages on, older turns are folded into a rolling summary (≤1000 words); the model sees summary + last exchange + new message. Cleared by New chat.
 - **Steps summary** (per request, `Ctx.steps_summary`): the tool calls already made, handed to each plan step so work is not repeated. Separate from the chat summary. Today's date is in every agent's prompt.
 - **Planner**: broad/vague/time-sensitive research starts with a `scout` step; the plan is always reviewed after it. Utility research steps are not retried. Hard limits per request: 5 web searches, 4 page reads. Tavily search uses `advanced` depth.
 - **Formatting**: Docs are created from Markdown through `import_to_google_doc`; `update_paragraph_style`, `insert_doc_elements`, `format_sheet_range`, `get_spreadsheet_info` and `batch_update_presentation` are exposed (34 Google tools). Existing `mcp.json` files must list the new tools (or be deleted to regenerate).
 - **Animations** (`space.ts`): on a normal launch the orb just floats up from the bottom (CSS only, no stars); the starfield is only for updates: during an update a 15-second flight through space plays (the updater waits that long before installing, then the app restarts into the new version). A minimised widget opens to the full window first. Dev preview: Ctrl+Shift+U.
-- **Updates** (Settings â†’ Updates): shows the installed version and a "Check for updates" button (`check_for_updates`). The updater now writes every step (check, download, install, errors) to `updater.log` in `%APPDATA%\com.priyanshu-madhup.siri-orb\`; read it when an update does not arrive.
+- **Updates** (Settings → Updates): shows the installed version and a "Check for updates" button (`check_for_updates`). The updater now writes every step (check, download, install, errors) to `updater.log` in `%APPDATA%\com.priyanshu-madhup.siri-orb\`; read it when an update does not arrive.
 - **First launch of a new install**: the space flight plays once as "Setting up Leo" (flag `leo.setupShown` in local storage; delete it to see it again), then the orb rises and, without keys, the Settings welcome opens.
-- **Smooth minimise**: the chat fades out (200 ms), then `set_mode` with `animate: true` runs `glide_to_widget`, which animates the window rectangle (size and position) down to the widget over about 0.3 s before switching off glass and the taskbar entry.
+- **Window animations**: minimise/open are screen-style sequences now (section 23); the first version of the window glide described here was replaced.
 - **Streaming typer** (`createStreamTyper` in `typewriter.ts`): streamed text is queued and typed character by character (about 110 chars/s, catching up so it never lags more than about 1.4 s).
 - **mcp.json upgrades**: on every launch `add_missing_tools` adds any Google tool from `DEFAULT_GOOGLE_TOOLS` that an older `mcp.json` lacks (custom entries are kept), so installs created by older versions get new tools after an update.
 - **Update check retries**: each check waits up to 30 s and is tried up to 3 times; every failed attempt is written to `updater.log`.
@@ -426,45 +449,61 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 
 ---
 
-## 18. Additions in 2.3.0
+## 18. Seeing the screen (`vision.rs`)
 
-- **Seeing the screen** (`vision.rs`): every agent has `look_at_screen {question}`. It captures the primary monitor in memory (Leo's own window is hidden for ~0.2 s), shrinks it to â‰¤1600 px, encodes JPEG, sends it to the main model through OpenRouter and returns a detailed written description. The image is never written to disk and is dropped after the call. The main model must accept image input. Its result counts as untrusted content (taints the turn). Tool row: "Looking at your screen".
-- **Shared session facts** (`session.rs`, `SessionInfo`): the date/time clock and the IP-based location (`get_location`, via ipwho.is) are stored once per app session. `current_datetime` reads the stored clock (it keeps running from the first read); `get_location` returns the stored place or looks it up once. Every agent's prompt is rebuilt each round with what is already known, so agents use it instead of calling a tool.
-- **All agents** now have `web_search`, `current_datetime`, `get_location` and `look_at_screen` (plus `ask_user`, memory). `fetch_page`, `open_url`, `open_app` stay with the utility agent. Search limits stay per request.
-- **Docs approvals**: after the user approves writing to a Google document (created or first edited) in a request, further edits to that same document (`modify_doc_text`, `update_paragraph_style`, `insert_doc_elements`) in the same request no longer ask again. Scope is the request and that document id only. The Docs prompt also tells the agent to write in as few calls as possible.
-- Correction: the project **is** a git repository (`origin` = GitHub `Priyanshu-Madhup/Leo-AI`, branch `main`); Google tools count is 34.
+- Every agent has **`look_at_screen { question }`**. The agent puts exactly what it wants to know in `question`; it gets back a detailed written description, never pixels.
+- Flow: Rust emits `screen://prepare`; the frontend shrinks to the orb **without animation** (`setMode("widget", true)`) and calls `screen_prepared` (Rust waits at most 3 s, then captures anyway); `xcap` captures the **primary monitor into memory**; the image is shrunk to ≤1600 px on its long side, encoded as JPEG (quality 80), turned into a base64 data URL and sent to the **main model** through OpenRouter with an analyst system prompt; the model's description (≤1800 tokens) is the tool result. Then Rust emits `screen://done` and the frontend reopens the chat (fast path). The orb widget can appear in a corner of the picture.
+- **Nothing is written to disk**: the bytes live only for that one request and are dropped afterwards. The image does leave the machine (OpenRouter and the model provider).
+- The call goes through `openrouter::quick_chat` (reasoning off, then a bigger budget): reasoning models otherwise spend the whole budget on hidden thinking and return nothing, which showed as "The screenshot could not be read".
+- The main model must accept images; otherwise the error says to pick another model in settings. The result counts as untrusted content (text on the screen is data, not instructions). Tool row: "Looking at your screen" (eye icon).
 
-## 19. Changes in 3.0.0
+## 19. Shared session facts and tool access (`session.rs`)
 
-- `look_at_screen` uses `quick_chat` (reasoning off, then a larger budget), so reasoning models no longer return an empty description.
-- While taking a screenshot Leo shrinks to the orb instead of hiding: Rust emits `screen://prepare`, the frontend switches to widget mode and calls `screen_prepared`, Rust captures, then emits `screen://done` and the frontend reopens the chat. The window is never hidden.
+- `SessionInfo` (one per app run) stores the **clock** (the moment it was first read; the time then keeps running from it) and the **location** (city, region, country, time zone, looked up from the IP address through ipwho.is, so that service sees the IP; stored after the first lookup).
+- `current_datetime` and `get_location` read this store; the first agent to need the location looks it up and every other agent gets the stored value. Each agent's system prompt is rebuilt **every round** with a note of what is known ("Today is …; the user's location is …, do not call get_location" or "not known yet, call it once"), so a lookup by one agent shows up in the others at once.
+- Tool access: every agent has `web_search`, `current_datetime`, `get_location`, `look_at_screen`, `ask_user`, `recall_memory`, `remember`. Only the utility agent has `fetch_page`, `open_url`, `open_app`. Search limits (5 searches, 4 page reads per request) are shared across all agents.
 
-## 20. Chat history (SQLite)
+## 20. Chat history (SQLite, `history.rs`) and the sidebar
 
-- `history.rs` keeps every chat in `%APPDATA%\com.priyanshu-madhup.siri-orb\leo.db` (SQLite via `rusqlite`, bundled). Tables: `conversations(title, summary, folded, steps_summary, ...)` and `messages(role, content)`. A database error is logged and never stops a reply.
-- A chat row is created with the first message. Each tool call updates `steps_summary` immediately; each new context summary updates `summary` and `folded` (how many of the oldest messages it covers) immediately. Messages are saved after each successful reply.
-- Opening a chat (`history_open`) restores the on-screen messages, the in-memory history (messages after `folded`), the context summary, and the next request seeds its steps summary from the saved row. New chat starts a new row; the Chats sidebar (clock button in the top bar) lists chats, highlights the open one and has a delete button on each chat (a second click confirms). There is no "delete all". After the first message of a new chat the model writes a short name for it in the background (`history::name_chat`, event `history://titled`); until then the chat is named after the start of the message.
+- **Storage**: one SQLite file, `%APPDATA%\com.priyanshu-madhup.siri-orb\leo.db` (`rusqlite`, bundled, opened lazily). Tables: `conversations(id, title, created_at, updated_at, summary, folded, steps_summary)` and `messages(conversation_id, role, content, created_at)` with cascade delete. A database error is logged and never stops a reply.
+- **What is saved and when**: the chat row is created with the first message; messages (the user's text and Leo's final reply) are saved after each successful reply; **each new context summary** (`summary.rs`) is written to `summary` and `folded` (how many of the oldest messages it covers) **the moment it is created**; **each tool call** appends to the **steps summary**, which is written to `steps_summary` the moment the line is created (last 30 lines).
+- **What is loaded when**: `history_open(id)` restores the on-screen messages, the in-memory history (messages after `folded`), the context summary and the folded count; the next request of that chat seeds its steps summary from the saved row, so plan steps see what was already done (the plan-step wording says to build on it and not redo it unless the user asks again).
+- **Names**: right after the first message of a new chat, `history::name_chat` asks the model (in the background, same model) for a 2–5 word title in the message's language and stores it; the event `history://titled` refreshes the sidebar. Until then the chat is named after the start of the message. If the call fails the placeholder stays.
+- **Sidebar** (clock button, full mode only): slides in from the left (`side-in`) and out (`side-out`, 240 ms); lists chats newest first with the open one highlighted; clicking a chat opens it; each chat has its own **trash button** (first click turns it into "Delete?", second click deletes; deleting the open chat clears the screen); there is **no "delete all"**. Esc, ×, or a click on the dimmed area closes it.
+- Commands: `history_list`, `history_current`, `history_open`, `history_delete`; event `history://titled`. Unit tests cover the schema, cascade, the live-history calculation and title cleaning.
 
-## 21. Changes in 3.1.0
+## 21. Google Docs behaviour (`agent.rs`, `agents.rs`)
 
-- Chat history in SQLite (section 20).
-- Toolbar fix: `.full-only` / `.widget-only` now use `!important`, because `#toolbar button { display: grid }` out-ranked them and showed the wrong buttons in each mode.
-- Docs: a second create with the same title in one request is refused (the agent edits the first); the Docs agent must not read documents back after writing; request limit raised from 5 to 10 minutes.
+- **Approval once per document**: after the user approves a Docs write (create, or first edit) in a request, further edits to the **same document id** (`modify_doc_text`, `update_paragraph_style`, `insert_doc_elements`) in that request do not ask again. The id comes from the `document_id` argument of an edit or from the link / `ID:` in a create result. Scope: that request and that document only.
+- **No copies**: a create (`create_doc`, `import_to_google_doc`) with the same title as one already created in the request is refused with the existing id (the agent edits or links it).
+- **No unfinished text**: a Docs write whose text ends with "…" or "..." is refused before any approval card, with an instruction to write the complete part (a half-finished first part such as "…the European …" had been left in a document).
+- **Prompt rules (Docs agent)**: plan the section list first, create with the first sections, then add every remaining section in its own call at the end of the document, never reply after only the first part, never read the document back just to check, never ask the user about indexes or spaces. Keep each call to about 1,500 words (`MAX_OUTPUT_TOKENS` is 4096).
+- "Word doc" requests become Google Docs (Leo has no Word tools). The request time limit is 10 minutes.
 
-## 22. Changes in 3.2.0
+## 22. What's new in the app, and the release rule
 
-- **What's new in the UI** (`src/changelog.ts`): after an update, a panel lists the new features once (up to the last 3 releases), ending with one general "Bug fixes and improvements" line. **Rule for every release: add an entry at the top of `RELEASES` with plain-language feature lines; never itemise bug fixes.** Shown in the full window (a minimised orb waits until it opens); a fresh install gets none; Settings -> Updates has a "What's new" link. The last seen version is `leo.lastVersion` in local storage; installs from before this existed count as 2.2.8.
-- **Smoother minimise** (`glide_to_widget` in `lib.rs`): time-based (0.55 s) with the same cubic-bezier as the orb's CSS transition, one `SetWindowPos` call per frame (Windows, `windows-sys`) so position and size never show out of step, and the acrylic blur is switched off before the motion because redrawing it on every resize caused the stutter.
-- **Idle orb motion** (`orb.ts`): a `uCalm` uniform (1 when idle, 0 when active) adds a slow drift of the whole orb, deeper two-beat breathing and a wandering highlight; idle ripple and flow speed are higher.
+- After an update a panel (`#whatsnew`) lists the new **features** once (up to the last 3 releases, newest first) and always ends with one general line, **"Bug fixes and improvements"**. Bug fixes are **never itemised**.
+- Entries live in `src/changelog.ts` (`RELEASES`, newest first, plain-language feature lines). **Every release must add one** (the release steps are in section 16).
+- Shown in the full window (a minimised orb waits until it opens, about 0.9 s after); a fresh install gets none; installs from before versions were tracked count as 2.2.8; Settings → Updates has a "What's new" link that reopens it. The last version shown is stored as `leo.lastVersion`.
 
-## 23. Minimise animation (unreleased)
+## 23. Window animations (CSS in `styles.css`, sequencing in `main.ts`, flights in `lib.rs`)
 
-Minimising plays like a screen switching off (`playMinimize` in `main.ts`, `crt-off` / `dot-*` / `orb-emerge` in `styles.css`): the blur is switched off (`glass_off`), the panel is clipped from top and bottom to a line and then from the sides to a point, the point flares, the window (kept full size, only a point visible) is flown by Rust (`fly_to_orb`, one `SetWindowPos` per frame, 0.6 s) so the point lands exactly at the orb's centre in its widget spot, then `set_mode("widget")` runs and the orb grows out of the point. `setMode(next, fast = true)` skips all of it (used for screenshots); reduced-motion users skip it too. The orb's centre inside the 160x150 widget window is (80, 65) (`ORB_CENTER_IN_WIDGET`); change both if the widget layout changes.
+**Idle orb** (`orb.ts`): a `uCalm` uniform (1 when idle, fading to 0 when active or hovered) adds a slow drift of the whole orb, deeper two-beat breathing, a wandering highlight, and slightly stronger idle ripples.
 
-Opening the chat plays the same animation backwards (`playMaximize`): the orb shrinks to a bright point (`orb-implode`), Rust flies the small window so the point reaches the middle of the screen (`fly_to_center`, which first saves the orb's own spot and marks the window as "not the orb" so the flight is not tracked as a drag), then `set_mode("full", quiet: true)` resizes and centres the window in one `SetWindowPos` call with no blur yet, the point opens into a line and the line into the window (`crt-on`), and `glass_on` adds the blur and shadow at the end. `setMode(next, true)` skips it (update warp, screenshots). The full window is now centred on the monitor the orb is on (it used to ignore the monitor's origin).
+**Minimise** (`playMinimize`, then `setMode`): 1. `sinking`: the interface fades and the big orb sinks to the bottom of the window (`orb-rise` played in reverse). 2. `collapsing`: the blur is switched off (`glass_off`; the blur fills the whole window and cannot shut), the panel is clipped from top and bottom to a line, then from the sides to a point (`crt-off`), while the bright point fades in (`dot-appear`). 3. `shining`: the point flares (`dot-shine`). 4. `fly_to_orb`: the window stays **full size and transparent** (only the point shows) and Rust moves it with one `SetWindowPos` call per frame, time-based with ease-in-out, so the point lands exactly at the orb's centre in its saved spot (or the top-right default). 5. `landing`: the point fades; the page switches to widget layout, `set_mode("widget")` resizes the window, `viewportSettled()` waits until the page has really caught up with the small window, then `emerging` grows the orb out of the point (`orb-emerge`). The orb-size transition is disabled while this runs so the orb is small the instant the layout appears.
 
-Speed of the minimise/open animations: one factor, 1.15 (15% slower than the base timings). It lives in three places that must match: `--slow` in `styles.css`, `SLOW` in `main.ts` and `FLIGHT_SECONDS` in `lib.rs`.
+**Open** (`playMaximize`): the mirror image. `imploding`: the orb shrinks into a bright point (`orb-implode`; in the 160×150 orb window the point gets a tighter glow, `dot-shine-small`, because a bigger bloom is cut off by the window edge and shows as a square). `fly_to_center`: first saves the orb's own spot and marks the window as "not the orb" (`FULL_VIEW` true) so the flight is not recorded as the user dragging the orb, then carries the point to the middle of the monitor. `expanding` + `set_mode("full", quiet: true)`: the window is resized and centred on that monitor in a single `SetWindowPos` call with no blur yet. `crt-on`: the point widens to a line (0.27 s) and the line opens to the full window (0.33 s × 1.12, the vertical part is 12% slower), the line at 42.21% of 0.6396 s. Then `glass_on` and **`startIntro()`**: the window has its full size and the big orb floats up from the bottom (`orb-rise`), after which the top bar and chat fade in.
 
-Later tweaks (unreleased): the Chats sidebar slides out as well as in (`closing` class, `side-out`, 240 ms). When the chat opens from the orb, the orb is held back until the window has reached full size (`crt-on`), then `startIntro()` floats it up from the bottom and fades the rest of the interface in after it. In `crt-on` only the vertical part (line to full window) is 12% slower than the base timing: base 0.27 s widening + 0.33 s x 1.12 vertical = 0.6396 s, line at 42.21%; keep `CRT_ON_MS` in `main.ts` in step.
+**Fast path and limits**: `setMode(next, true)` skips all of this (update flight, screenshots). Users with "reduce motion" skip it too. A `minimizing` flag ignores new mode changes while a sequence runs. The orb's centre inside the 160×150 widget window is (80, 65) (`ORB_CENTER_IN_WIDGET` in `lib.rs`, the `#flash` position in `styles.css`); change both if the widget layout changes.
 
-Minimising now starts with the opening's last step backwards (`sinking` class): the interface fades out and the big orb sinks to the bottom of the window (`orb-rise` played in reverse, `SINK_MS` = 0.9 s x SLOW), and only then does the window shut to a line and a point. Both directions are therefore mirror images.
+**Speed**: one factor, **1.15** (15% slower than the base timings), in three places that must match: `--slow` in `styles.css`, `SLOW` in `main.ts` and `FLIGHT_SECONDS` in `lib.rs`. The JS wait constants (`SINK_MS`, `COLLAPSE_MS`, `SHINE_MS`, `LAND_MS`, `EMERGE_MS`, `IMPLODE_MS`, `CRT_ON_MS`) must match their CSS animation durations.
+
+**Chats sidebar**: slides in (`side-in`) and out (`side-out`, `closing` class, 240 ms).
+
+## 24. Version history (high level)
+
+- **3.3.0**: screen-style minimise/open animations; Chats sidebar that slides in/out, delete per chat, model-written chat names; fixes (square glow on the orb point, unfinished Docs text).
+- **3.2.0**: What's new panel; smoother minimise; idle orb motion.
+- **3.1.0**: SQLite chat history; toolbar buttons shown only in the right mode; no duplicate Google Docs; 10-minute request limit.
+- **3.0.0**: screen vision for all agents; shared date/time/location; web search for all agents; one Docs approval per document.
+- **2.2.x and earlier**: see section 17.
