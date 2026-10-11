@@ -70,8 +70,11 @@ body[data-mode="full"] #widget {
 }
 
 body[data-mode="full"] #drag-strip { display: none; }
-body[data-mode="widget"] .full-only { display: none; }
-body[data-mode="full"] .widget-only { display: none; }
+/* !important: `#toolbar button { display: grid }` out-ranks these otherwise,
+   which showed the settings and + buttons on the orb and the expand button
+   on the full window. */
+body[data-mode="widget"] .full-only { display: none !important; }
+body[data-mode="full"] .widget-only { display: none !important; }
 
 /* ---------- top bar ---------- */
 #topbar {
@@ -1065,3 +1068,48 @@ body.minimizing #topbar {
   pointer-events: none;
   transition: opacity 0.18s ease;
 }
+
+/* ---------- chat history ---------- */
+#history {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  border-radius: 8px;
+  background: rgba(6, 6, 8, 0.55);
+  backdrop-filter: blur(6px);
+  animation: sheet-fade 0.16s ease-out;
+}
+
+#history.hidden,
+body[data-mode="widget"] #history { display: none; }
+
+#history-list { padding: 6px 8px; min-height: 80px; max-height: 480px; }
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-item:hover { background: var(--fill); }
+.history-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-item .when { color: var(--ink-dim); font-size: 11px; }
+.history-item .del { color: var(--ink-dim); padding: 2px 6px; border-radius: 50%; }
+.history-item .del:hover { background: var(--fill); color: var(--ink); }
+.history-empty { padding: 18px 10px; color: var(--ink-dim); font-size: 13px; text-align: center; }
+.history-foot { padding: 8px 14px 12px; border-top: 1px solid var(--edge); text-align: right; }
+.link-btn { border: none; background: none; color: var(--ink-dim); font: inherit; font-size: 12px; cursor: pointer; }
+.link-btn:hover { color: var(--ink); }

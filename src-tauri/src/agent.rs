@@ -11,7 +11,7 @@
 //! just a tool call (`ask_gmail`, `ask_utility`, ...) that runs that agent's
 //! loop and returns its answer; agents.rs says who may call whom.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::agents::{self, AgentId};
+use crate::history::{self, Db, StoredMessage};
 use crate::interact::{self, Approval, AskOption};
 use crate::memory::MemoryState;
 use crate::openrouter::{post_chat, post_chat_stream};
@@ -48,7 +49,7 @@ const MAX_OUTPUT_TOKENS: u32 = 4096;
 
 /// One request may run this long, not counting time spent waiting for the user
 /// to answer a card. Past it, Leo stops rather than spin forever.
-const JOB_LIMIT: Duration = Duration::from_secs(300);
+const JOB_LIMIT: Duration = Duration::from_secs(600);
 const TOO_SLOW: &str = "That is taking too long, so I stopped. Try again, or choose a faster model in settings.";
 
 const BAD_ARGUMENTS: &str = "Your tool call could not be read: its arguments were not valid JSON, most likely because the message was cut off for being too long. Nothing was done. Try again with less text in the call. For a long document, create it with the first part, then add the rest in several smaller edits.";
@@ -61,6 +62,11 @@ pub struct AgentState {
     summary: Mutex<String>,
     /// Held while a summary update runs, so the next request waits for it.
     folding: Arc<tokio::sync::Mutex<()>>,
+    /// The saved chat this conversation belongs to (see history.rs), created
+    /// with the first message. `None` until then, or if saving is unavailable.
+    conv: Mutex<Option<i64>>,
+    /// How many of the chat's oldest saved messages the summary covers.
+    folded: Mutex<usize>,
     /// Bumped by "New chat"; an update started before it is thrown away.
     epoch: AtomicU64,
     /// Bumped by every new run and by `agent_cancel`; a run whose id no
@@ -126,6 +132,8 @@ pub struct Ctx {
     pub(crate) turn: Arc<AtomicU64>,
     pub(crate) my_turn: u64,
     pub depth: usize,
+    /// The saved chat this request belongs to, if any.
+    chat: Option<i64>,
     /// Stream the reply to the UI as it is written. Only for a single agent
     /// answering the user directly, never for plan steps or sub-agents.
     pub stream: bool,
@@ -148,6 +156,10 @@ pub struct Ctx {
     /// request (created or first edited), so follow-up edits to the same
     /// document do not ask again.
     docs_approved: Arc<Mutex<HashSet<String>>>,
+    /// Documents created in this request: lowercase title -> document id. A
+    /// second create with the same title is refused (the agent edits the first
+    /// instead of making copies).
+    docs_created: Arc<Mutex<HashMap<String, String>>>,
     /// When the request gives up; moved back while waiting for the user.
     deadline: Arc<Mutex<Instant>>,
 }
@@ -223,8 +235,22 @@ impl Ctx {
             None
         };
         if let Some(id) = id {
+            if is_doc_create(name) {
+                if let Some(title) = doc_title(args) {
+                    self.docs_created.lock().unwrap().insert(title, id.clone());
+                }
+            }
             self.docs_approved.lock().unwrap().insert(id);
         }
+    }
+
+    /// The id of a document with this title already created in this request,
+    /// when `name` is about to create it again.
+    fn duplicate_doc(&self, name: &str, args: &str) -> Option<String> {
+        if !is_doc_create(name) {
+            return None;
+        }
+        self.docs_created.lock().unwrap().get(&doc_title(args)?).cloned()
     }
 
     fn saved_facts(&self) -> Vec<String> {
@@ -249,6 +275,13 @@ fn is_doc_edit(name: &str) -> bool {
 
 fn is_doc_create(name: &str) -> bool {
     matches!(name, "google__create_doc" | "google__import_to_google_doc")
+}
+
+/// Lowercase title a create call asks for (`file_name` or `title`).
+fn doc_title(args: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(args).ok()?;
+    let t = v.get("file_name").or_else(|| v.get("title"))?.as_str()?.trim().to_lowercase();
+    if t.is_empty() { None } else { Some(t) }
 }
 
 fn doc_id_for_edit(name: &str, args: &str) -> Option<String> {
@@ -436,6 +469,14 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
         }
     }
 
+    // A document with this title was already made in this request: edit it
+    // instead of creating a copy (and asking for approval again).
+    if let Some(id) = ctx.duplicate_doc(name, args) {
+        return Err(format!(
+            "A document with this title was already created in this request (document id {id}). Do not create another: it is done. Reply with its link, or change it with modify_doc_text using that id."
+        ));
+    }
+
     // Anything that changes something needs an approval card: MCP tools not
     // marked read-only, and (once untrusted content has been read) the
     // built-in side-effect tools.
@@ -488,10 +529,19 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
     };
     ctx.log.lock().unwrap().push(line.chars().take(MAX_LOG_LINE).collect());
     {
-        let mut steps_summary = ctx.steps_summary.lock().unwrap();
-        steps_summary.push(line.chars().take(MAX_STEPS_SUMMARY_LINE).collect());
-        if steps_summary.len() > MAX_STEPS_SUMMARY_LINES {
-            steps_summary.remove(0);
+        let snapshot = {
+            let mut steps_summary = ctx.steps_summary.lock().unwrap();
+            steps_summary.push(line.chars().take(MAX_STEPS_SUMMARY_LINE).collect());
+            if steps_summary.len() > MAX_STEPS_SUMMARY_LINES {
+                steps_summary.remove(0);
+            }
+            steps_summary.clone()
+        };
+        // Written to the chat row the moment the line is created.
+        if let Some(chat) = ctx.chat {
+            if let Err(err) = app.state::<Db>().set_steps(app, chat, &snapshot) {
+                eprintln!("could not save the steps summary: {err}");
+            }
         }
     }
 
@@ -558,6 +608,8 @@ pub async fn run_request(
     };
 
     let my_turn = state.turn.fetch_add(1, Ordering::SeqCst) + 1;
+    let user_text = text.clone();
+    let chat = ensure_chat(&app, state, &text);
     let ctx = Ctx {
         app: app.clone(),
         api_key: api_key.clone(),
@@ -565,15 +617,21 @@ pub async fn run_request(
         turn: state.turn.clone(),
         my_turn,
         depth: 0,
+        chat,
         stream: false,
         tainted: Arc::new(AtomicBool::new(false)),
         writes: Arc::new(AtomicUsize::new(0)),
-        steps_summary: Arc::new(Mutex::new(Vec::new())),
+        // The chat's earlier steps summary is read back from the database,
+        // so a reopened chat carries on with the notes it already had.
+        steps_summary: Arc::new(Mutex::new(
+            chat.map(|c| app.state::<Db>().steps(&app, c)).unwrap_or_default(),
+        )),
         searches: Arc::new(AtomicUsize::new(0)),
         page_reads: Arc::new(AtomicUsize::new(0)),
         log: Arc::new(Mutex::new(Vec::new())),
         saved: Arc::new(Mutex::new(Vec::new())),
         docs_approved: Arc::new(Mutex::new(HashSet::new())),
+        docs_created: Arc::new(Mutex::new(HashMap::new())),
         deadline: Arc::new(Mutex::new(Instant::now() + JOB_LIMIT)),
     };
 
@@ -611,10 +669,15 @@ pub async fn run_request(
     // Only a run that is still current commits to the history, and only when
     // it succeeded, so a failed or superseded request leaves nothing behind.
     if state.turn.load(Ordering::SeqCst) == my_turn {
+        if let Some(chat) = chat {
+            if let Err(err) = app.state::<Db>().add_messages(&app, chat, &[("user", &user_text), ("assistant", &reply)]) {
+                eprintln!("could not save the chat: {err}");
+            }
+        }
         messages.push(ChatMessage::text("assistant", reply.clone()));
         trim_history(&mut messages);
         *state.history.lock().unwrap() = messages;
-        start_summary_update(&app, state, &api_key_for_summary, &models.main).await;
+        start_summary_update(&app, state, &api_key_for_summary, &models.main, chat).await;
     }
     Ok(reply)
 }
@@ -622,7 +685,7 @@ pub async fn run_request(
 /// Once the chat is long enough, folds its oldest exchange into the summary
 /// in the background (see summary.rs). A failure just leaves the messages in
 /// place; the next reply tries again with more to fold.
-async fn start_summary_update(app: &AppHandle, state: &AgentState, api_key: &str, model: &str) {
+async fn start_summary_update(app: &AppHandle, state: &AgentState, api_key: &str, model: &str, chat: Option<i64>) {
     let (old, current) = {
         let history = state.history.lock().unwrap();
         let current = state.summary.lock().unwrap().clone();
@@ -643,7 +706,18 @@ async fn start_summary_update(app: &AppHandle, state: &AgentState, api_key: &str
                 let mut history = state.history.lock().unwrap();
                 if history.len() >= old.len() {
                     history.drain(..old.len());
-                    *state.summary.lock().unwrap() = text;
+                    *state.summary.lock().unwrap() = text.clone();
+                    let folded = {
+                        let mut folded = state.folded.lock().unwrap();
+                        *folded += old.len();
+                        *folded
+                    };
+                    // Written to the chat row the moment the summary is created.
+                    if let Some(chat) = chat {
+                        if let Err(err) = app.state::<Db>().set_summary(&app, chat, &text, folded) {
+                            eprintln!("could not save the chat summary: {err}");
+                        }
+                    }
                 }
             }
             Ok(_) => {}
@@ -664,6 +738,54 @@ pub fn agent_reset(state: State<'_, AgentState>) {
     state.epoch.fetch_add(1, Ordering::SeqCst);
     state.history.lock().unwrap().clear();
     state.summary.lock().unwrap().clear();
+    *state.conv.lock().unwrap() = None;
+    *state.folded.lock().unwrap() = 0;
+}
+
+/// The saved chat for this conversation, created with its first message.
+fn ensure_chat(app: &AppHandle, state: &AgentState, first_message: &str) -> Option<i64> {
+    let mut conv = state.conv.lock().unwrap();
+    if conv.is_none() {
+        match app.state::<Db>().create_chat(app, first_message) {
+            Ok(id) => *conv = Some(id),
+            Err(err) => eprintln!("could not start a saved chat: {err}"),
+        }
+    }
+    *conv
+}
+
+/// Opens a saved chat: the assistant carries on with its messages, its context
+/// summary and its steps summary exactly as they were saved. Returns the
+/// messages for the screen.
+#[tauri::command]
+pub fn history_open(app: AppHandle, state: State<'_, AgentState>, db: State<'_, Db>, id: i64) -> Result<Vec<StoredMessage>, String> {
+    let loaded = db.load(&app, id)?;
+    state.turn.fetch_add(1, Ordering::SeqCst);
+    state.epoch.fetch_add(1, Ordering::SeqCst);
+    let mut live = history::live_history(&loaded.messages, loaded.folded);
+    trim_history(&mut live);
+    *state.history.lock().unwrap() = live;
+    *state.summary.lock().unwrap() = loaded.summary;
+    *state.folded.lock().unwrap() = loaded.folded;
+    *state.conv.lock().unwrap() = Some(id);
+    Ok(loaded.messages)
+}
+
+#[tauri::command]
+pub fn history_delete(app: AppHandle, state: State<'_, AgentState>, db: State<'_, Db>, id: i64) -> Result<(), String> {
+    db.delete(&app, id)?;
+    let current = *state.conv.lock().unwrap() == Some(id);
+    if current {
+        agent_reset(state);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn history_clear(app: AppHandle, state: State<'_, AgentState>, db: State<'_, Db>) -> Result<(), String> {
+    db.clear(&app)?;
+    agent_reset(state);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -678,6 +800,7 @@ mod tests {
         assert_eq!(super::doc_id_in("ID: 1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 done").as_deref(), Some(id));
         let args = format!(r#"{{"document_id":"{id}","start_index":1}}"#);
         assert_eq!(super::doc_id_for_edit("google__modify_doc_text", &args).as_deref(), Some(id));
+        assert_eq!(super::doc_title(r#"{"file_name":"  Formula Cars "}"#).as_deref(), Some("formula cars"));
         // Only edit tools are covered; other tools are not.
         assert_eq!(super::doc_id_for_edit("google__create_doc", &args), None);
         assert_eq!(super::doc_id_for_edit("google__modify_doc_text", "{}"), None);

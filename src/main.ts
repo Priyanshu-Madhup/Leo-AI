@@ -30,6 +30,11 @@ const closeBtn = document.querySelector<HTMLButtonElement>("#close-btn")!;
 const minimizeBtn = document.querySelector<HTMLButtonElement>("#minimize-btn")!;
 const expandBtn = document.querySelector<HTMLButtonElement>("#expand-btn")!;
 const newChatBtn = document.querySelector<HTMLButtonElement>("#new-chat-btn")!;
+const historyBtn = document.querySelector<HTMLButtonElement>("#history-btn")!;
+const historyPanel = document.querySelector<HTMLDivElement>("#history")!;
+const historyList = document.querySelector<HTMLDivElement>("#history-list")!;
+const historyClose = document.querySelector<HTMLButtonElement>("#history-close")!;
+const historyClear = document.querySelector<HTMLButtonElement>("#history-clear")!;
 const statusText = document.querySelector<HTMLSpanElement>("#status-text")!;
 const messagesEl = document.querySelector<HTMLDivElement>("#messages")!;
 const composer = document.querySelector<HTMLFormElement>("#composer")!;
@@ -322,7 +327,7 @@ function followEnd() {
 function addMessage(
   role: "user" | "assistant" | "error",
   text: string,
-  typing?: { onTick?: () => void; onDone?: () => void },
+  typing?: { onTick?: () => void; onDone?: () => void; instant?: boolean },
 ) {
   // A new message completes whatever was still being typed.
   currentTyper?.finish();
@@ -336,7 +341,7 @@ function addMessage(
   document.body.classList.add("has-messages");
   if (role !== "user") hideTyping();
   scrollToEnd();
-  if (role === "assistant") {
+  if (role === "assistant" && !typing?.instant) {
     currentTyper = typewrite(
       el,
       () => {
@@ -946,6 +951,95 @@ saveBtn.addEventListener("click", async () => {
 minimizeBtn.addEventListener("click", () => void setMode("widget"));
 expandBtn.addEventListener("click", () => void setMode("full"));
 newChatBtn.addEventListener("click", clearChat);
+
+// ---------- chat history ----------
+// Chats are saved on this device (SQLite). Opening one restores its messages
+// and the assistant carries on with the notes (context summary and steps
+// summary) that were saved with it.
+interface ChatInfo { id: number; title: string; updated_at: number }
+interface StoredMessage { role: string; content: string }
+
+function closeHistory() {
+  historyPanel.classList.add("hidden");
+}
+
+function whenText(seconds: number): string {
+  const d = new Date(seconds * 1000);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
+async function openHistory() {
+  historyPanel.classList.remove("hidden");
+  historyList.textContent = "";
+  let chats: ChatInfo[] = [];
+  try {
+    chats = await invoke<ChatInfo[]>("history_list");
+  } catch (err) {
+    historyList.textContent = errorMessage(err);
+    return;
+  }
+  if (chats.length === 0) {
+    const none = document.createElement("div");
+    none.className = "history-empty";
+    none.textContent = "No saved chats yet.";
+    historyList.appendChild(none);
+    return;
+  }
+  for (const chat of chats) {
+    const row = document.createElement("div");
+    row.className = "history-item";
+    row.tabIndex = 0;
+    const title = document.createElement("span");
+    title.className = "title";
+    title.textContent = chat.title;
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = whenText(chat.updated_at);
+    const del = document.createElement("button");
+    del.className = "del link-btn";
+    del.title = "Delete chat";
+    del.textContent = "\u00d7";
+    del.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await invoke("history_delete", { id: chat.id });
+      row.remove();
+    });
+    row.append(title, when, del);
+    row.addEventListener("click", () => void openChat(chat.id));
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") void openChat(chat.id);
+    });
+    historyList.appendChild(row);
+  }
+}
+
+async function openChat(id: number) {
+  closeHistory();
+  llm.cancel();
+  clearChat();
+  try {
+    const messages = await invoke<StoredMessage[]>("history_open", { id });
+    for (const m of messages) {
+      addMessage(m.role === "user" ? "user" : "assistant", m.content, { instant: true });
+    }
+    scrollToEnd();
+  } catch (err) {
+    addMessage("error", errorMessage(err));
+  }
+}
+
+historyBtn.addEventListener("click", () => void openHistory());
+historyClose.addEventListener("click", closeHistory);
+historyPanel.addEventListener("click", (event) => {
+  if (event.target === historyPanel) closeHistory();
+});
+historyClear.addEventListener("click", async () => {
+  await invoke("history_clear");
+  clearChat();
+  await openHistory();
+});
 
 closeBtn.addEventListener("click", () => {
   void getCurrentWindow().close();

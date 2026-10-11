@@ -178,7 +178,7 @@ fn step_message(goal: &str, done: &[Done], step: &Step, feedback: Option<&str>, 
         text.push('\n');
     }
     if !already_done.trim().is_empty() {
-        text.push_str("\nSteps summary so far (tool calls already made in this request; do not repeat any of them, build on them):\n");
+        text.push_str("\nSteps summary so far (tool calls already made in this chat and request; build on them and do not redo them unless the user is asking for the same thing again):\n");
         text.push_str(already_done);
         text.push('\n');
     }

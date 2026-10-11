@@ -438,3 +438,15 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 
 - `look_at_screen` uses `quick_chat` (reasoning off, then a larger budget), so reasoning models no longer return an empty description.
 - While taking a screenshot Leo shrinks to the orb instead of hiding: Rust emits `screen://prepare`, the frontend switches to widget mode and calls `screen_prepared`, Rust captures, then emits `screen://done` and the frontend reopens the chat. The window is never hidden.
+
+## 20. Chat history (SQLite)
+
+- `history.rs` keeps every chat in `%APPDATA%\com.priyanshu-madhup.siri-orb\leo.db` (SQLite via `rusqlite`, bundled). Tables: `conversations(title, summary, folded, steps_summary, ...)` and `messages(role, content)`. A database error is logged and never stops a reply.
+- A chat row is created with the first message. Each tool call updates `steps_summary` immediately; each new context summary updates `summary` and `folded` (how many of the oldest messages it covers) immediately. Messages are saved after each successful reply.
+- Opening a chat (`history_open`) restores the on-screen messages, the in-memory history (messages after `folded`), the context summary, and the next request seeds its steps summary from the saved row. New chat starts a new row; delete and "Delete all chats" are in the Chats panel (clock button in the top bar).
+
+## 21. Changes in 3.1.0
+
+- Chat history in SQLite (section 20).
+- Toolbar fix: `.full-only` / `.widget-only` now use `!important`, because `#toolbar button { display: grid }` out-ranked them and showed the wrong buttons in each mode.
+- Docs: a second create with the same title in one request is refused (the agent edits the first); the Docs agent must not read documents back after writing; request limit raised from 5 to 10 minutes.

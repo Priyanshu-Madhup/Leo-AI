@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Physical
 
 mod agent;
 mod agents;
+mod history;
 mod interact;
 mod mcp;
 mod memory;
@@ -302,10 +303,15 @@ pub fn run() {
         .manage(interact::InteractState::default())
         .manage(web::WebState::default())
         .manage(session::SessionInfo::default())
+        .manage(history::Db::default())
         .invoke_handler(tauri::generate_handler![
             agent::agent_run,
             agent::agent_cancel,
             vision::screen_prepared,
+            history::history_list,
+            agent::history_open,
+            agent::history_delete,
+            agent::history_clear,
             agent::agent_reset,
             interact::agent_answer,
             memory::memory_configure,
