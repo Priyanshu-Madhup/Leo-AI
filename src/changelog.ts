@@ -10,6 +10,14 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.4.0",
+    features: [
+      "Your profile: add your name, birthday, location and interests in Settings, under Customise profile",
+      "Personal greetings that fit the time of day, the day of the week and your birthday",
+      "Leo uses your profile to help you more personally",
+    ],
+  },
+  {
     version: "3.3.0",
     features: [
       "A new screen-off animation when you minimise Leo: the orb sinks, the window closes to a bright point that flies to the orb's spot and grows into the orb",

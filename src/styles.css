@@ -758,7 +758,9 @@ a.get-key {
 a.get-key:hover { opacity: 1; }
 
 .sheet input[type="password"],
-.sheet input[type="text"] {
+.sheet input[type="text"],
+.sheet input[type="date"],
+.sheet textarea {
   width: 100%;
   box-sizing: border-box;
   padding: 9px 11px;
@@ -773,7 +775,11 @@ a.get-key:hover { opacity: 1; }
 }
 
 .sheet input[type="password"]:focus,
-.sheet input[type="text"]:focus { outline: none; border-color: rgba(255, 255, 255, 0.4); }
+.sheet input[type="text"]:focus,
+.sheet input[type="date"]:focus,
+.sheet textarea:focus { outline: none; border-color: rgba(255, 255, 255, 0.4); }
+
+.sheet textarea { resize: none; line-height: 1.4; }
 
 .secret { position: relative; }
 .secret input { padding-right: 40px; }
@@ -843,7 +849,9 @@ a.get-key:hover { opacity: 1; }
   color: var(--ink-dim);
 }
 
-#save-key-btn {
+#save-key-btn,
+#profile-save-btn,
+.primary-btn {
   padding: 9px 24px;
   border: none;
   border-radius: 10px;
@@ -853,7 +861,9 @@ a.get-key:hover { opacity: 1; }
   cursor: pointer;
 }
 
-#save-key-btn:hover { filter: brightness(1.1); }
+#save-key-btn:hover,
+#profile-save-btn:hover,
+.primary-btn:hover { filter: brightness(1.1); }
 
 body[data-mode="widget"] #orb { cursor: grab; }
 
@@ -875,7 +885,9 @@ body[data-mode="widget"] #orb { cursor: grab; }
 
 /* Dark text on the metal buttons. */
 .card-actions button.primary,
-#save-key-btn {
+#save-key-btn,
+#profile-save-btn,
+.primary-btn {
   color: #101112;
   font-weight: 600;
 }
@@ -1374,3 +1386,42 @@ body.sinking #chat {
   from { opacity: 1; transform: none; }
   to { opacity: 0; transform: translateY(8px); }
 }
+
+/* ---------- profile: a second tab inside Settings ---------- */
+.head-title { display: flex; align-items: center; gap: 4px; margin-left: -6px; }
+.head-title .icon-btn.hidden { display: none; }
+#profile-back:not(.hidden) + h2 { margin-left: 0; }
+.head-title:has(#profile-back.hidden) { margin-left: 0; }
+
+/* One window, two panes: the main settings, or the profile. */
+#settings[data-pane="profile"] .pane-main,
+#settings:not([data-pane="profile"]) .pane-profile { display: none; }
+
+#profile-status {
+  flex: 1;
+  margin: 0;
+  min-height: 16px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+/* ---------- profile prompt (shown once after an update) ---------- */
+#profile-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 22;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  border-radius: 8px;
+  background: rgba(6, 6, 8, 0.55);
+  backdrop-filter: blur(6px);
+  animation: sheet-fade 0.16s ease-out;
+}
+
+#profile-prompt.hidden,
+body[data-mode="widget"] #profile-prompt { display: none; }
+
+.prompt-body { padding: 4px 18px 16px; }
+.prompt-body p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink); }
+.prompt-foot { justify-content: flex-end; }

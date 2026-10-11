@@ -14,6 +14,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::profile::Profile;
 use crate::types::ChatMessage;
 
 const TITLE_CHARS: usize = 60;
@@ -36,6 +37,17 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_by_chat ON messages(conversation_id, id);
+-- The user's profile (profile.rs): at most one row. Everyone has the table
+-- after an update, and it starts empty.
+CREATE TABLE IF NOT EXISTS profile (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    name       TEXT    NOT NULL DEFAULT '',
+    dob        TEXT    NOT NULL DEFAULT '',
+    location   TEXT    NOT NULL DEFAULT '',
+    occupation TEXT    NOT NULL DEFAULT '',
+    interests  TEXT    NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL DEFAULT 0
+);
 ";
 
 #[derive(Default)]
@@ -88,6 +100,37 @@ impl Db {
             *guard = Some(conn);
         }
         f(guard.as_ref().unwrap()).map_err(|e| e.to_string())
+    }
+
+    /// The saved profile; empty when none was ever saved.
+    pub fn get_profile(&self, app: &AppHandle) -> Result<Profile, String> {
+        self.run(app, |c| {
+            let row = c
+                .query_row("SELECT name, dob, location, occupation, interests FROM profile WHERE id = 1", [], |r| {
+                    Ok(Profile {
+                        name: r.get(0)?,
+                        dob: r.get(1)?,
+                        location: r.get(2)?,
+                        occupation: r.get(3)?,
+                        interests: r.get(4)?,
+                    })
+                })
+                .optional()?;
+            Ok(row.unwrap_or_default())
+        })
+    }
+
+    pub fn save_profile(&self, app: &AppHandle, p: &Profile) -> Result<(), String> {
+        self.run(app, |c| {
+            c.execute(
+                "INSERT INTO profile (id, name, dob, location, occupation, interests, updated_at)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(id) DO UPDATE SET name = ?1, dob = ?2, location = ?3,
+                     occupation = ?4, interests = ?5, updated_at = ?6",
+                params![p.name, p.dob, p.location, p.occupation, p.interests, now()],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn create_chat(&self, app: &AppHandle, first_message: &str) -> Result<i64, String> {
@@ -268,6 +311,25 @@ mod tests {
         c.execute("DELETE FROM conversations WHERE id = 1", []).unwrap();
         let left: i64 = c.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn profile_table_starts_empty_and_saves_one_row() {
+        let c = memory_db();
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM profile", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+        for name in ["A", "B"] {
+            c.execute(
+                "INSERT INTO profile (id, name) VALUES (1, ?1)
+                 ON CONFLICT(id) DO UPDATE SET name = ?1",
+                params![name],
+            )
+            .unwrap();
+        }
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM profile", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        // A second row with another id is not allowed.
+        assert!(c.execute("INSERT INTO profile (id, name) VALUES (2, 'x')", []).is_err());
     }
 
     #[test]

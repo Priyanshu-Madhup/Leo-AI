@@ -6,11 +6,14 @@
 //! agent's prompt), so nothing is looked up twice. The clock keeps running
 //! from the stored moment, so a stored time is never stale.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
 use serde::Deserialize;
+
+use crate::profile::Profile;
 
 const LOCATION_URL: &str = "https://ipwho.is/";
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(8);
@@ -44,6 +47,12 @@ pub struct SessionInfo {
     /// current time is `moment + elapsed` without asking again.
     clock: Mutex<Option<(DateTime<Local>, Instant)>>,
     place: Mutex<Option<Place>>,
+    /// What the user told Leo about themselves (profile.rs).
+    profile: Mutex<Option<Profile>>,
+    /// True while `place` came from the profile rather than the IP lookup.
+    place_from_profile: Mutex<bool>,
+    /// Set once the saved profile has been read for the agents.
+    profile_loaded: AtomicBool,
 }
 
 impl SessionInfo {
@@ -64,6 +73,32 @@ impl SessionInfo {
 
     pub fn date_text(&self) -> String {
         self.now().format("%A, %-d %B %Y").to_string()
+    }
+
+    /// True only the first time: the caller then loads the saved profile.
+    pub fn take_unloaded_flag(&self) -> bool {
+        !self.profile_loaded.swap(true, Ordering::SeqCst)
+    }
+
+    /// Stores the user's profile for the agents. A location in it replaces the
+    /// IP-based one (and is dropped again if the user clears it).
+    pub fn set_profile(&self, profile: &Profile) {
+        self.profile_loaded.store(true, Ordering::SeqCst);
+        *self.profile.lock().unwrap() = if profile.is_empty() { None } else { Some(profile.clone()) };
+        let mut place = self.place.lock().unwrap();
+        let mut from_profile = self.place_from_profile.lock().unwrap();
+        if !profile.location.trim().is_empty() {
+            *place = Some(Place {
+                city: profile.location.trim().to_string(),
+                region: String::new(),
+                country: String::new(),
+                timezone: String::new(),
+            });
+            *from_profile = true;
+        } else if *from_profile {
+            *place = None;
+            *from_profile = false;
+        }
     }
 
     pub fn place(&self) -> Option<Place> {
@@ -92,6 +127,18 @@ impl SessionInfo {
             None => note.push_str(" The user's location is not known yet: call get_location once if the request depends on where they are."),
         }
         note.push_str(" You already know the date; call current_datetime only for the time of day.");
+        if let Some(p) = self.profile.lock().unwrap().as_ref() {
+            let name = p.name.trim();
+            if !name.is_empty() {
+                note.push_str(&format!(" The user's name is {name}; use it naturally and sparingly, not in every reply."));
+            }
+            if !p.occupation.trim().is_empty() {
+                note.push_str(&format!(" About them (their own words): {}.", p.occupation.trim()));
+            }
+            if !p.interests.trim().is_empty() {
+                note.push_str(&format!(" Their interests: {}.", p.interests.trim()));
+            }
+        }
         note
     }
 }
@@ -164,6 +211,28 @@ mod tests {
         let note = s.prompt_note();
         assert!(note.contains("Delhi, Delhi, India (time zone Asia/Kolkata)"));
         assert!(!note.contains("call get_location once"));
+    }
+
+    #[test]
+    fn profile_reaches_the_prompt_and_replaces_the_ip_location() {
+        let s = SessionInfo::default();
+        s.set_profile(&Profile {
+            name: "Priyanshu".into(),
+            location: "Delhi, India".into(),
+            interests: "chess".into(),
+            ..Default::default()
+        });
+        let note = s.prompt_note();
+        assert!(note.contains("The user's name is Priyanshu"));
+        assert!(note.contains("Delhi, India"));
+        assert!(note.contains("Their interests: chess"));
+        assert!(!note.contains("call get_location once"));
+        // The date of birth is never part of the prompt.
+        s.set_profile(&Profile { name: "Priyanshu".into(), dob: "2001-05-12".into(), ..Default::default() });
+        assert!(!s.prompt_note().contains("2001"));
+        // Clearing the location drops the profile's place again.
+        assert!(s.place().is_none());
+        assert!(s.prompt_note().contains("call get_location once"));
     }
 
     #[test]

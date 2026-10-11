@@ -82,6 +82,19 @@
         </div>
       </div>
 
+      <div id="profile-prompt" class="hidden" role="dialog" aria-modal="true" aria-labelledby="profile-prompt-title">
+        <div class="sheet">
+          <div class="sheet-head"><h2 id="profile-prompt-title">Make Leo yours</h2></div>
+          <div class="sheet-body prompt-body">
+            <p>Add your name, birthday and where you are, and Leo can greet you properly and help you more personally. It takes a few seconds, and you can change it any time in Settings.</p>
+          </div>
+          <div class="sheet-foot prompt-foot">
+            <button type="button" id="profile-prompt-no" class="link-btn">Not now</button>
+            <button type="button" id="profile-prompt-yes" class="primary-btn">Add my details</button>
+          </div>
+        </div>
+      </div>
+
       <div id="history" class="hidden" role="dialog" aria-modal="true" aria-labelledby="history-title">
         <aside class="side">
           <div class="side-head">
@@ -97,13 +110,27 @@
       <div id="settings" class="hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div class="sheet">
           <header class="sheet-head">
-            <h2 id="settings-title">Settings</h2>
+            <div class="head-title">
+              <button type="button" id="profile-back" class="icon-btn hidden" aria-label="Back to settings">
+                <svg viewBox="0 0 16 16" width="14" height="14"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+              </button>
+              <h2 id="settings-title">Settings</h2>
+            </div>
             <button type="button" id="settings-close" class="icon-btn" aria-label="Close settings">
               <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
             </button>
           </header>
 
-          <div class="sheet-body">
+          <div class="sheet-body pane-main">
+            <section class="group">
+              <div class="group-head"><h3>Profile</h3></div>
+              <p class="hint">Tell Leo your name, birthday and where you are, so it can greet and help you personally.</p>
+              <div class="update-row">
+                <span id="profile-summary">Not set up yet</span>
+                <button type="button" id="profile-open-btn" class="outline-btn">Customise profile</button>
+              </div>
+            </section>
+
             <section class="group">
               <div class="group-head">
                 <h3>AI model</h3>
@@ -241,9 +268,43 @@
             </section>
           </div>
 
-          <footer class="sheet-foot">
+          <footer class="sheet-foot pane-main">
             <p id="settings-status" role="status"></p>
             <button type="button" id="save-key-btn">Save</button>
+          </footer>
+
+          <div class="sheet-body pane-profile">
+            <section class="group">
+              <p class="hint">All optional. Leo uses this for greetings and to help you personally.</p>
+              <div class="field">
+                <div class="field-head"><label for="profile-name">Name</label></div>
+                <input id="profile-name" type="text" placeholder="What should Leo call you?" autocomplete="off" maxlength="60" />
+              </div>
+              <div class="field">
+                <div class="field-head"><label for="profile-dob">Date of birth</label></div>
+                <input id="profile-dob" type="date" autocomplete="off" />
+                <p class="hint small">Only used on this device, for a birthday wish. It is never sent anywhere.</p>
+              </div>
+              <div class="field">
+                <div class="field-head"><label for="profile-location">Location</label></div>
+                <input id="profile-location" type="text" placeholder="City, Country" autocomplete="off" maxlength="100" />
+                <p class="hint small">Used instead of guessing your location from your internet connection.</p>
+              </div>
+              <div class="field">
+                <div class="field-head"><label for="profile-occupation">What you do</label></div>
+                <input id="profile-occupation" type="text" placeholder="e.g. student, designer" autocomplete="off" maxlength="80" />
+              </div>
+              <div class="field">
+                <div class="field-head"><label for="profile-interests">Interests</label></div>
+                <textarea id="profile-interests" rows="2" placeholder="e.g. chess, Formula 1, cooking" maxlength="300"></textarea>
+                <p class="hint small">Your name, location, occupation and interests are shared with the AI model so replies feel personal. Your date of birth is not.</p>
+              </div>
+            </section>
+          </div>
+
+          <footer class="sheet-foot pane-profile">
+            <p id="profile-status" role="status"></p>
+            <button type="button" id="profile-save-btn">Save</button>
           </footer>
         </div>
       </div>

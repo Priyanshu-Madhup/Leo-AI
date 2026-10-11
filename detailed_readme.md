@@ -1,6 +1,6 @@
 # Leo — detailed project guide
 
-This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.3.0.**
+This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.4.0.**
 
 > Project root: `P:\Leo\siri-orb` (the app; it is the root of the GitHub repo `Priyanshu-Madhup/Leo-AI`). `README.md` is the short user-facing page (install, release steps). One level up, `P:\Leo\Leo_ Functionalities.excalidraw` is the original feature diagram.
 
@@ -500,8 +500,16 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 
 **Chats sidebar**: slides in (`side-in`) and out (`side-out`, `closing` class, 240 ms).
 
-## 24. Version history (high level)
+## 24. Profile and personal greetings
 
+- **Storage**: the `profile` table in `leo.db` (`id` fixed to 1, so at most one row; `name`, `dob` as `YYYY-MM-DD`, `location`, `occupation`, `interests`). The table is created by the schema that runs every time the database opens, so **every existing user gets it on update, empty**. `profile.rs` validates and tidies input (length limits, single-line text, a real date of birth between 1900 and today). Commands: `profile_get`, `profile_save`.
+- **What uses it**: (1) the greeting on the empty chat screen (`src/greeting.ts`): needs a name, uses the first name, the time of day on the computer, the day of the week and the birthday ("Hey Priyanshu, night owl today?" at 1 am, "Good afternoon Priyanshu, how are you?", birthday wishes, Monday/Friday/weekend variants; the variant is picked once per session; without a name the plain "What can I do for you?" stays); (2) the agents' prompts (`session.rs` `prompt_note`): name, occupation, interests; (3) the location: a profile location **replaces the IP-based lookup** (and the IP lookup returns if it is cleared). **The date of birth never leaves the device**: it is only used for the birthday greeting (a test checks it is not in the prompt).
+- **UI**: Settings has a Profile row at the top with a "Customise profile" button. It opens a **second tab in the same window** (`#settings[data-pane="profile"]`, a back arrow returns to the main settings) with name, date of birth, location, what you do and interests. Fields are optional and the hints say what is shared with the AI model and what is not.
+- **Asking existing users**: when the profile is empty, Leo is set up (key and model present), no other panel is open and `leo.profilePrompted` is not set, a one-time "Make Leo yours" prompt appears (after the What's new panel when there is one, shortly after start-up otherwise, and after closing Settings for a first-time set-up). "Add my details" opens the profile tab; "Not now" dismisses it for good (the flag is set when it is shown, so it never nags). The profile stays reachable from Settings.
+
+## 25. Version history (high level)
+
+- **3.4.0**: profile (name, birthday, location, occupation, interests) in a second Settings tab, a one-time prompt for existing users, personal time-aware greetings, the profile used in the agents' prompts.
 - **3.3.0**: screen-style minimise/open animations; Chats sidebar that slides in/out, delete per chat, model-written chat names; fixes (square glow on the orb point, unfinished Docs text).
 - **3.2.0**: What's new panel; smoother minimise; idle orb motion.
 - **3.1.0**: SQLite chat history; toolbar buttons shown only in the right mode; no duplicate Google Docs; 10-minute request limit.

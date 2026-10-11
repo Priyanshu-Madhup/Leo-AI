@@ -13,6 +13,7 @@ mod memory;
 mod openrouter;
 mod orchestrator;
 mod planner;
+mod profile;
 mod reflection;
 mod session;
 mod summary;
@@ -406,6 +407,8 @@ pub fn run() {
             agent::agent_cancel,
             vision::screen_prepared,
             history::history_list,
+            profile::profile_get,
+            profile::profile_save,
             agent::history_open,
             agent::history_delete,
             agent::history_current,

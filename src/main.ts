@@ -6,6 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { SiriOrb, type OrbState } from "./orb";
 import { AgentClient, answerCard, onAgentEvent, type AgentEvent, type Brand } from "./agent";
 import { renderMarkdown } from "./markdown";
+import { greeting } from "./greeting";
 import { BUG_FIXES_LINE, RELEASES, releasesSince, type Release } from "./changelog";
 import { createStreamTyper, typewrite, type StreamTyper, type Typer } from "./typewriter";
 import { playWarp, type SpaceRun } from "./space";
@@ -22,6 +23,7 @@ const STORAGE_SETUP = "leo.setupShown";
 const STORAGE_BLUR = "leo.blur";
 const STORAGE_SHORTCUT = "leo.shortcut";
 const STORAGE_LAST_VERSION = "leo.lastVersion";
+const STORAGE_PROFILE_PROMPTED = "leo.profilePrompted";
 const STORAGE_TRANSPARENCY = "leo.transparency";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#orb")!;
@@ -326,7 +328,11 @@ async function setMode(next: Mode, fast = false) {
   localStorage.setItem(STORAGE_MODE, next);
   document.body.dataset.mode = next;
   if (rising) startIntro();
-  if (next === "full") flushWhatsNew();
+  if (next === "full") {
+    renderGreeting();
+    flushWhatsNew();
+    window.setTimeout(maybePromptProfile, 3500);
+  }
   if (next === "widget") closeSettings();
   showCaption("");
   try {
@@ -802,6 +808,7 @@ function clearChat() {
   document.body.classList.remove("has-messages");
   hideTyping();
   llm.reset();
+  renderGreeting();
 }
 
 function errorMessage(err: unknown): string {
@@ -944,8 +951,122 @@ function fillSettings() {
   for (const input of [apiKeyInput, memoryKeyInput, searchKeyInput]) input.type = "password";
 }
 
+// ---------- profile (a second tab inside the settings window) ----------
+interface Profile { name: string; dob: string; location: string; occupation: string; interests: string }
+const EMPTY_PROFILE: Profile = { name: "", dob: "", location: "", occupation: "", interests: "" };
+let profile: Profile = { ...EMPTY_PROFILE };
+
+const profileBack = document.querySelector<HTMLButtonElement>("#profile-back")!;
+const profileOpenBtn = document.querySelector<HTMLButtonElement>("#profile-open-btn")!;
+const profileSummary = document.querySelector<HTMLSpanElement>("#profile-summary")!;
+const profileSaveBtn = document.querySelector<HTMLButtonElement>("#profile-save-btn")!;
+const profileStatus = document.querySelector<HTMLParagraphElement>("#profile-status")!;
+const settingsTitle = document.querySelector<HTMLHeadingElement>("#settings-title")!;
+const profileFields = {
+  name: document.querySelector<HTMLInputElement>("#profile-name")!,
+  dob: document.querySelector<HTMLInputElement>("#profile-dob")!,
+  location: document.querySelector<HTMLInputElement>("#profile-location")!,
+  occupation: document.querySelector<HTMLInputElement>("#profile-occupation")!,
+  interests: document.querySelector<HTMLTextAreaElement>("#profile-interests")!,
+};
+
+function profileIsEmpty(p: Profile): boolean {
+  return Object.values(p).every((v) => !v.trim());
+}
+
+function showSettingsPane(pane: "main" | "profile") {
+  settingsModal.dataset.pane = pane;
+  profileBack.classList.toggle("hidden", pane !== "profile");
+  settingsTitle.textContent = pane === "profile" ? "Your profile" : "Settings";
+  if (pane === "profile") {
+    for (const key of Object.keys(profileFields) as (keyof Profile)[]) profileFields[key].value = profile[key];
+    profileStatus.textContent = "";
+    profileFields.name.focus();
+  }
+}
+
+function updateProfileSummary() {
+  profileSummary.textContent = profile.name.trim() ? `Hi, ${profile.name.trim().split(/\s+/)[0]}` : profileIsEmpty(profile) ? "Not set up yet" : "Saved";
+}
+
+// The greeting on the empty chat screen: personal when there is a name, the
+// plain heading otherwise. The variant is picked once per session.
+const emptyHeading = document.querySelector<HTMLHeadingElement>("#empty h1")!;
+const PLAIN_HEADING = emptyHeading.textContent ?? "";
+const greetingSeed = Math.floor(Math.random() * 1_000_000);
+
+function renderGreeting() {
+  emptyHeading.textContent = greeting(profile, new Date(), greetingSeed) ?? PLAIN_HEADING;
+}
+
+async function loadProfile() {
+  try {
+    profile = await invoke<Profile>("profile_get");
+  } catch {
+    return; // not running inside the app (plain browser)
+  }
+  updateProfileSummary();
+  renderGreeting();
+}
+
+profileOpenBtn.addEventListener("click", () => showSettingsPane("profile"));
+profileBack.addEventListener("click", () => showSettingsPane("main"));
+
+let profileSavedTimer = 0;
+profileSaveBtn.addEventListener("click", async () => {
+  const entered: Profile = {
+    name: profileFields.name.value,
+    dob: profileFields.dob.value,
+    location: profileFields.location.value,
+    occupation: profileFields.occupation.value,
+    interests: profileFields.interests.value,
+  };
+  try {
+    profile = await invoke<Profile>("profile_save", { profile: entered });
+  } catch (err) {
+    profileStatus.textContent = errorMessage(err);
+    return;
+  }
+  updateProfileSummary();
+  renderGreeting();
+  profileStatus.textContent = "Saved.";
+  window.clearTimeout(profileSavedTimer);
+  profileSavedTimer = window.setTimeout(() => (profileStatus.textContent = ""), 2500);
+});
+
+// After an update (or on a first run once Leo is set up), existing users with
+// an empty profile are asked once to add their details.
+const profilePrompt = document.querySelector<HTMLDivElement>("#profile-prompt")!;
+
+function closeProfilePrompt() {
+  profilePrompt.classList.add("hidden");
+}
+
+function maybePromptProfile() {
+  if (localStorage.getItem(STORAGE_PROFILE_PROMPTED)) return;
+  const busy =
+    mode !== "full" ||
+    warping ||
+    minimizing ||
+    pendingWhatsNew !== null ||
+    !whatsNewPanel.classList.contains("hidden") ||
+    !settingsModal.classList.contains("hidden") ||
+    !historyPanel.classList.contains("hidden");
+  if (busy || !profileIsEmpty(profile) || !getApiKey() || !getModel()) return;
+  localStorage.setItem(STORAGE_PROFILE_PROMPTED, "1");
+  profilePrompt.classList.remove("hidden");
+}
+
+document.querySelector<HTMLButtonElement>("#profile-prompt-no")!.addEventListener("click", closeProfilePrompt);
+document.querySelector<HTMLButtonElement>("#profile-prompt-yes")!.addEventListener("click", () => {
+  closeProfilePrompt();
+  openSettings();
+  showSettingsPane("profile");
+});
+
 function openSettings(message = "") {
   if (mode !== "full") return;
+  showSettingsPane("main");
   fillSettings();
   settingsStatus.textContent = message;
   settingsModal.classList.remove("hidden");
@@ -954,7 +1075,11 @@ function openSettings(message = "") {
 }
 
 function closeSettings() {
+  const wasOpen = !settingsModal.classList.contains("hidden");
   settingsModal.classList.add("hidden");
+  showSettingsPane("main");
+  // Right after the first set-up, offer the profile.
+  if (wasOpen) window.setTimeout(maybePromptProfile, 700);
 }
 
 settingsBtn.addEventListener("click", () => {
@@ -1348,6 +1473,7 @@ function showWhatsNew(releases: Release[]) {
 
 function closeWhatsNew() {
   whatsNewPanel.classList.add("hidden");
+  window.setTimeout(maybePromptProfile, 500);
 }
 
 /** Shown when the chat is on screen; a minimised orb waits until it opens. */
@@ -1384,6 +1510,7 @@ document.querySelector<HTMLButtonElement>("#whatsnew-btn")!.addEventListener("cl
 
 // ---------- start ----------
 setState("idle");
+void loadProfile().then(() => window.setTimeout(maybePromptProfile, 2600));
 void invoke("set_mode", { mode });
 
 // A new install always gets the space flight once (as "Setting up Leo"), so

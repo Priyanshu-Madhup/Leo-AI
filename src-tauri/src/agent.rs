@@ -635,6 +635,8 @@ pub async fn run_request(
 
     let my_turn = state.turn.fetch_add(1, Ordering::SeqCst) + 1;
     let user_text = text.clone();
+    // The agents should know the saved profile even before the screen asks.
+    crate::profile::ensure_loaded(&app);
     let (chat, new_chat) = ensure_chat(&app, state, &text);
     if let (Some(id), true) = (chat, new_chat) {
         // The model names the chat from its first message, in the background.
