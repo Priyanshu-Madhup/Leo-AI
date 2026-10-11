@@ -36,7 +36,6 @@ const historyBtn = document.querySelector<HTMLButtonElement>("#history-btn")!;
 const historyPanel = document.querySelector<HTMLDivElement>("#history")!;
 const historyList = document.querySelector<HTMLDivElement>("#history-list")!;
 const historyClose = document.querySelector<HTMLButtonElement>("#history-close")!;
-const historyClear = document.querySelector<HTMLButtonElement>("#history-clear")!;
 const statusText = document.querySelector<HTMLSpanElement>("#status-text")!;
 const messagesEl = document.querySelector<HTMLDivElement>("#messages")!;
 const composer = document.querySelector<HTMLFormElement>("#composer")!;
@@ -152,7 +151,7 @@ function startUpdateWarp(title = "Updating Leo") {
   spaceRun?.stop();
   document.body.classList.remove("intro");
   // The flight needs the whole window, so a minimised orb opens up first.
-  if (mode === "widget") void setMode("full");
+  if (mode === "widget") void setMode("full", true);
   closeSettings();
   showCaption("");
   document.body.classList.add("warping");
@@ -239,31 +238,120 @@ type Mode = "full" | "widget";
 let mode: Mode = "widget";
 document.body.dataset.mode = mode;
 
-const MINIMIZE_FADE_MS = 200;
+// Minimising plays like a screen switching off: the top and bottom edges close
+// to the middle until it is a line, the sides close until it is a point, the
+// point flares bright, flies to where the orb lives, and grows into the orb.
+const SLOW = 1.15; // same factor as --slow in styles.css
+const COLLAPSE_MS = 520 * SLOW; // matches crt-off
+const SHINE_MS = 320 * SLOW; // matches dot-shine
+const LAND_MS = 90 * SLOW; // matches dot-out
+const SINK_MS = 900 * SLOW; // matches the sinking orb (orb-rise reversed)
+const EMERGE_MS = 700 * SLOW; // matches orb-emerge
+const IMPLODE_MS = 420 * SLOW; // matches orb-implode
+const CRT_ON_MS = 639.6 * SLOW; // matches crt-on (the vertical part is 12% slower)
+let minimizing = false;
 
-async function setMode(next: Mode) {
-  // Minimising: the chat fades away first, then the window glides down to the
-  // orb (Rust animates the window rectangle).
-  const minimizing = next === "widget" && mode === "full" && !warping;
-  if (minimizing) {
-    document.body.classList.add("minimizing");
-    closeSettings();
-    await new Promise((resolve) => window.setTimeout(resolve, MINIMIZE_FADE_MS));
+const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+/** After the window shrinks, the page can still be laid out at the old size
+    for a frame or two; wait until it has caught up so the orb grows in place. */
+async function viewportSettled(big = false, maxMs = 700) {
+  const started = performance.now();
+  const ready = () => (big ? window.innerWidth >= 380 : window.innerWidth <= 260);
+  while (!ready() && performance.now() - started < maxMs) await nextFrame();
+  await nextFrame();
+  await nextFrame();
+}
+
+async function playMinimize() {
+  const cls = document.body.classList;
+  closeSettings();
+  closeHistory();
+  closeWhatsNew();
+  showCaption("");
+  // First the opening backwards: the interface fades and the big orb sinks to
+  // the bottom; then the window shuts.
+  cls.add("sinking");
+  await sleep(SINK_MS);
+  cls.remove("sinking");
+  cls.add("collapsing");
+  void invoke("glass_off");
+  await sleep(COLLAPSE_MS);
+  cls.add("shining");
+  await sleep(SHINE_MS);
+  // The window carries the point across the screen to the orb's place.
+  await invoke("fly_to_orb");
+  cls.add("landing");
+  await sleep(LAND_MS);
+}
+
+// Opening the chat plays the same thing backwards: the orb shrinks to a bright
+// point, the point flies to the middle of the screen, opens into a line, and
+// the line opens into the chat window.
+async function playMaximize() {
+  const cls = document.body.classList;
+  closeSettings();
+  showCaption("");
+  cls.add("imploding");
+  await sleep(IMPLODE_MS);
+  cls.add("shining");
+  await sleep(SHINE_MS);
+  await invoke("fly_to_center");
+  cls.add("landing");
+  await sleep(LAND_MS);
+}
+
+/** `fast` skips the animation (used when Leo only steps aside for a moment). */
+async function setMode(next: Mode, fast = false) {
+  if (minimizing) return;
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const animated = !warping && !fast && !reduced;
+  const closing = animated && next === "widget" && mode === "full";
+  const opening = animated && next === "full" && mode === "widget";
+  if (closing || opening) {
+    minimizing = true;
+    try {
+      await (closing ? playMinimize() : playMaximize());
+    } catch {
+      // If the flight failed the switch below still puts things in place.
+    }
   }
-  // Opening the chat from the orb always plays the rise-up animation. It
+  // Opening the chat without the animation plays the rise-up instead. It
   // starts invisible, so the window resizing underneath is not seen.
-  const opening = next === "full" && mode === "widget" && !warping;
+  const rising = next === "full" && mode === "widget" && !warping && !opening;
+  const cls = document.body.classList;
+  if (opening) cls.add("expanding");
   mode = next;
   localStorage.setItem(STORAGE_MODE, next);
   document.body.dataset.mode = next;
-  if (opening) startIntro();
+  if (rising) startIntro();
   if (next === "full") flushWhatsNew();
   if (next === "widget") closeSettings();
   showCaption("");
   try {
-    await invoke("set_mode", { mode: next, animate: minimizing });
+    await invoke("set_mode", { mode: next, quiet: opening });
   } finally {
-    document.body.classList.remove("minimizing");
+    if (closing) {
+      // The orb grows out of the point, in the place the point flew to.
+      await viewportSettled();
+      cls.remove("collapsing", "shining", "landing");
+      cls.add("emerging");
+      window.setTimeout(() => cls.remove("emerging"), EMERGE_MS);
+      minimizing = false;
+    } else if (opening) {
+      // The point opens into a line, and the line into the chat window.
+      await viewportSettled(true);
+      cls.remove("imploding", "shining", "landing");
+      cls.add("crt-on");
+      await sleep(CRT_ON_MS);
+      void invoke("glass_on");
+      // The window has reached its full size: now the big orb floats up from
+      // the bottom, and the rest of the interface fades in after it.
+      cls.remove("expanding", "crt-on");
+      startIntro();
+      minimizing = false;
+    }
   }
 }
 
@@ -820,7 +908,7 @@ let reopenAfterScreenshot = false;
 void listen("screen://prepare", async () => {
   reopenAfterScreenshot = mode === "full";
   try {
-    if (reopenAfterScreenshot) await setMode("widget");
+    if (reopenAfterScreenshot) await setMode("widget", true);
   } finally {
     await invoke("screen_prepared");
   }
@@ -828,7 +916,7 @@ void listen("screen://prepare", async () => {
 void listen("screen://done", async () => {
   if (!reopenAfterScreenshot) return;
   reopenAfterScreenshot = false;
-  await setMode("full");
+  await setMode("full", true);
 });
 
 void listen<boolean>("shortcut://pressed", (event) => {
@@ -955,15 +1043,27 @@ minimizeBtn.addEventListener("click", () => void setMode("widget"));
 expandBtn.addEventListener("click", () => void setMode("full"));
 newChatBtn.addEventListener("click", clearChat);
 
-// ---------- chat history ----------
+// ---------- chat history (sidebar) ----------
 // Chats are saved on this device (SQLite). Opening one restores its messages
 // and the assistant carries on with the notes (context summary and steps
-// summary) that were saved with it.
+// summary) that were saved with it. The model names each chat after its first
+// message. Each chat has its own delete button (a second click confirms).
 interface ChatInfo { id: number; title: string; updated_at: number }
 interface StoredMessage { role: string; content: string }
 
+const TRASH_ICON =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8h5.8l.6-8M6.8 7v3.5M9.2 7v3.5"/></svg>';
+
+const HISTORY_SLIDE_MS = 240; // matches side-out
+let historyCloseTimer = 0;
+
 function closeHistory() {
-  historyPanel.classList.add("hidden");
+  if (historyPanel.classList.contains("hidden") || historyPanel.classList.contains("closing")) return;
+  historyPanel.classList.add("closing");
+  historyCloseTimer = window.setTimeout(() => {
+    historyPanel.classList.add("hidden");
+    historyPanel.classList.remove("closing");
+  }, HISTORY_SLIDE_MS);
 }
 
 function whenText(seconds: number): string {
@@ -973,49 +1073,93 @@ function whenText(seconds: number): string {
     : d.toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
-async function openHistory() {
-  historyPanel.classList.remove("hidden");
-  historyList.textContent = "";
+function showNoChats() {
+  const none = document.createElement("div");
+  none.className = "history-empty";
+  none.textContent = "No saved chats yet.";
+  historyList.appendChild(none);
+}
+
+async function renderHistory() {
   let chats: ChatInfo[] = [];
+  let activeId: number | null = null;
   try {
-    chats = await invoke<ChatInfo[]>("history_list");
+    [chats, activeId] = await Promise.all([invoke<ChatInfo[]>("history_list"), invoke<number | null>("history_current")]);
   } catch (err) {
     historyList.textContent = errorMessage(err);
     return;
   }
+  historyList.textContent = "";
   if (chats.length === 0) {
-    const none = document.createElement("div");
-    none.className = "history-empty";
-    none.textContent = "No saved chats yet.";
-    historyList.appendChild(none);
+    showNoChats();
     return;
   }
   for (const chat of chats) {
     const row = document.createElement("div");
-    row.className = "history-item";
+    row.className = "history-item" + (chat.id === activeId ? " active" : "");
     row.tabIndex = 0;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
     const title = document.createElement("span");
     title.className = "title";
     title.textContent = chat.title;
     const when = document.createElement("span");
     when.className = "when";
     when.textContent = whenText(chat.updated_at);
+    meta.append(title, when);
+
     const del = document.createElement("button");
-    del.className = "del link-btn";
+    del.className = "del";
     del.title = "Delete chat";
-    del.textContent = "\u00d7";
+    del.innerHTML = TRASH_ICON;
+    let armed = false;
+    let timer = 0;
+    const disarm = () => {
+      armed = false;
+      del.classList.remove("confirm");
+      del.innerHTML = TRASH_ICON;
+    };
     del.addEventListener("click", async (event) => {
       event.stopPropagation();
-      await invoke("history_delete", { id: chat.id });
+      if (!armed) {
+        armed = true;
+        del.classList.add("confirm");
+        del.textContent = "Delete?";
+        timer = window.setTimeout(disarm, 3000);
+        return;
+      }
+      window.clearTimeout(timer);
+      try {
+        await invoke("history_delete", { id: chat.id });
+      } catch {
+        disarm();
+        return;
+      }
+      if (chat.id === activeId) clearChat();
       row.remove();
+      if (!historyList.querySelector(".history-item")) showNoChats();
     });
-    row.append(title, when, del);
+    del.addEventListener("blur", () => {
+      window.clearTimeout(timer);
+      disarm();
+    });
+
+    row.append(meta, del);
     row.addEventListener("click", () => void openChat(chat.id));
     row.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") void openChat(chat.id);
+      if (event.key === "Enter" && event.target === row) void openChat(chat.id);
     });
     historyList.appendChild(row);
   }
+}
+
+async function openHistory() {
+  // Opening while it is still sliding out cancels the close.
+  window.clearTimeout(historyCloseTimer);
+  historyPanel.classList.remove("closing");
+  historyPanel.classList.remove("hidden");
+  await renderHistory();
 }
 
 async function openChat(id: number) {
@@ -1038,10 +1182,12 @@ historyClose.addEventListener("click", closeHistory);
 historyPanel.addEventListener("click", (event) => {
   if (event.target === historyPanel) closeHistory();
 });
-historyClear.addEventListener("click", async () => {
-  await invoke("history_clear");
-  clearChat();
-  await openHistory();
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !historyPanel.classList.contains("hidden")) closeHistory();
+});
+// A new chat gets its name from the model a moment after the first message.
+void listen("history://titled", () => {
+  if (!historyPanel.classList.contains("hidden")) void renderHistory();
 });
 
 closeBtn.addEventListener("click", () => {

@@ -144,7 +144,9 @@ fn place_widget(window: &WebviewWindow, saved: Option<(i32, i32)>) -> tauri::Res
 const WIDGET_SIZE: (f64, f64) = (160.0, 150.0);
 const FULL_SIZE: (f64, f64) = (440.0, 700.0);
 
-fn apply_mode(window: &WebviewWindow, mode: &str) -> tauri::Result<()> {
+/// `quiet` (opening the chat inside the grow animation): no blur or shadow yet,
+/// because they fill the whole window at once; `glass_on` adds them at the end.
+fn apply_mode(window: &WebviewWindow, mode: &str, quiet: bool) -> tauri::Result<()> {
     if mode == "widget" {
         // Read before resizing: window events during the switch must not
         // overwrite where the user last left the orb.
@@ -172,18 +174,32 @@ fn apply_mode(window: &WebviewWindow, mode: &str) -> tauri::Result<()> {
 
     // Never taller than the screen, leaving room for the taskbar.
     let height = FULL_SIZE.1.min(screen.height as f64 / scale - 80.0);
-    window.set_size(Size::Logical(LogicalSize {
-        width: FULL_SIZE.0,
-        height,
-    }))?;
+    if !quiet {
+        window.set_size(Size::Logical(LogicalSize {
+            width: FULL_SIZE.0,
+            height,
+        }))?;
+    }
     // The full view is a normal app window, so it gets a taskbar entry;
     // the widget stays out of the taskbar.
     window.set_skip_taskbar(false)?;
-    set_glass(window, true);
+    if quiet {
+        FULL_VIEW.store(true, Ordering::SeqCst);
+    } else {
+        set_glass(window, true);
+    }
 
-    let x = ((screen.width as f64 - FULL_SIZE.0 * scale) / 2.0).round() as i32;
-    let y = ((screen.height as f64 - height * scale) / 2.0).round() as i32;
-    window.set_position(Position::Physical(PhysicalPosition { x, y }))?;
+    // Centred on the screen the orb is on.
+    let origin = monitor.position();
+    let x = origin.x + ((screen.width as f64 - FULL_SIZE.0 * scale) / 2.0).round() as i32;
+    let y = origin.y + ((screen.height as f64 - height * scale) / 2.0).round() as i32;
+    if quiet {
+        // One call for size and place: the bright point must not jump around
+        // while the window grows underneath it.
+        move_window(window, x, y, (FULL_SIZE.0 * scale).round() as u32, (height * scale).round() as u32)?;
+    } else {
+        window.set_position(Position::Physical(PhysicalPosition { x, y }))?;
+    }
     window.show()?;
     let _ = window.set_focus();
     Ok(())
@@ -205,65 +221,110 @@ fn widget_target(window: &WebviewWindow, saved: Option<(i32, i32)>) -> tauri::Re
     Ok((p.x + monitor.size().width as i32 - width, p.y + (34.0 * scale).round() as i32))
 }
 
-/// Shrinks the chat window into the orb widget in one smooth motion: the
-/// window's rectangle glides from its current size and place to the widget's,
-/// then the widget settings (no glass, no taskbar entry) are applied.
-async fn glide_to_widget(window: WebviewWindow) -> tauri::Result<()> {
-    let ease = |t: f64| bezier_ease(t);
-    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+/// Where the orb sits inside the 160x150 widget window (logical pixels); the
+/// bright point flies to this spot and the orb grows there.
+const ORB_CENTER_IN_WIDGET: (f64, f64) = (80.0, 65.0);
+/// How long the point takes to fly to the orb's place.
+const FLIGHT_SECONDS: f64 = 0.6 * 1.15; // 1.15 = SLOW in main.ts
 
-    // Read before anything moves, so the glide cannot overwrite the saved spot.
+fn ease_in_out(t: f64) -> f64 {
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+    }
+}
+
+/// Switches the blur behind the window off for the minimise animation. The
+/// blur always fills the whole window, so it cannot shut like the rest.
+/// (Unlike `set_glass` this leaves `FULL_VIEW` alone, so the flight below is
+/// not mistaken for the user dragging the orb.)
+#[tauri::command]
+fn glass_off(window: WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = window_vibrancy::clear_acrylic(&window);
+    }
+    let _ = window.set_shadow(false);
+}
+
+/// The window, now showing only a bright point at its centre, carries that
+/// point across the screen to where the orb lives. The window keeps its size
+/// (the point is in the middle of it), so nothing reflows on the way; the
+/// frontend switches to the orb once it arrives.
+#[tauri::command]
+async fn fly_to_orb(window: WebviewWindow) -> Result<(), String> {
+    fly(window).await.map_err(|e| e.to_string())
+}
+
+async fn fly(window: WebviewWindow) -> tauri::Result<()> {
     let saved = widget_pos(window.app_handle());
     let scale = window.scale_factor()?;
-    let from_pos = window.outer_position()?;
-    let from_size = window.outer_size()?;
+    let pos = window.outer_position()?;
+    let size = window.outer_size()?;
     let (to_x, to_y) = widget_target(&window, saved)?;
-    let (to_w, to_h) = ((WIDGET_SIZE.0 * scale).round(), (WIDGET_SIZE.1 * scale).round());
 
-    // The blur behind the window is redrawn on every resize, which is what
-    // makes a shrinking window stutter. The chat has already faded out, so
-    // it is switched off before the motion starts.
-    set_glass(&window, false);
+    // Where the point is now (the middle of the window), and where the orb's
+    // centre will be.
+    let dot = (pos.x as f64 + size.width as f64 / 2.0, pos.y as f64 + size.height as f64 / 2.0);
+    let goal = (to_x as f64 + ORB_CENTER_IN_WIDGET.0 * scale, to_y as f64 + ORB_CENTER_IN_WIDGET.1 * scale);
+    glide(&window, goal.0 - dot.0, goal.1 - dot.1).await
+}
 
-    // Time-based, with the same curve and length as the orb's own CSS
-    // transition, so the orb and the window shrink in step on any frame rate.
+/// Opening the chat: the orb has shrunk to a point inside the small window;
+/// the window carries it to the middle of the screen.
+#[tauri::command]
+async fn fly_to_center(window: WebviewWindow) -> Result<(), String> {
+    fly_center(window).await.map_err(|e| e.to_string())
+}
+
+async fn fly_center(window: WebviewWindow) -> tauri::Result<()> {
+    // The orb's own spot is kept now; from here on the window moving is not
+    // the user dragging the orb, so it is not tracked as one.
+    let _ = widget_pos(window.app_handle());
+    save_widget_pos(window.app_handle());
+    FULL_VIEW.store(true, Ordering::SeqCst);
+
+    let monitor = window
+        .current_monitor()?
+        .or(window.primary_monitor()?)
+        .ok_or_else(|| tauri::Error::WindowNotFound)?;
+    let scale = window.scale_factor()?;
+    let pos = window.outer_position()?;
+    let (origin, area) = (monitor.position(), monitor.size());
+
+    let dot = (pos.x as f64 + ORB_CENTER_IN_WIDGET.0 * scale, pos.y as f64 + ORB_CENTER_IN_WIDGET.1 * scale);
+    let goal = (origin.x as f64 + area.width as f64 / 2.0, origin.y as f64 + area.height as f64 / 2.0);
+    glide(&window, goal.0 - dot.0, goal.1 - dot.1).await
+}
+
+/// Moves the window (size unchanged) by `dx`, `dy` physical pixels with a
+/// smooth start and stop.
+async fn glide(window: &WebviewWindow, dx: f64, dy: f64) -> tauri::Result<()> {
+    let pos = window.outer_position()?;
+    let size = window.outer_size()?;
     let started = std::time::Instant::now();
     loop {
-        let t = (started.elapsed().as_secs_f64() / GLIDE_SECONDS).min(1.0);
-        let e = ease(t);
+        let t = (started.elapsed().as_secs_f64() / FLIGHT_SECONDS).min(1.0);
+        let e = ease_in_out(t);
         move_window(
-            &window,
-            lerp(from_pos.x as f64, to_x as f64, e).round() as i32,
-            lerp(from_pos.y as f64, to_y as f64, e).round() as i32,
-            lerp(from_size.width as f64, to_w, e).round() as u32,
-            lerp(from_size.height as f64, to_h, e).round() as u32,
+            window,
+            pos.x + (dx * e).round() as i32,
+            pos.y + (dy * e).round() as i32,
+            size.width,
+            size.height,
         )?;
         if t >= 1.0 {
-            break;
+            return Ok(());
         }
         tokio::time::sleep(std::time::Duration::from_millis(4)).await;
     }
-
-    window.set_skip_taskbar(true)?;
-    place_widget(&window, saved)
 }
 
-/// How long the glide to the orb takes; matches `--orb-d` in styles.css.
-const GLIDE_SECONDS: f64 = 0.55;
-
-/// The CSS curve `cubic-bezier(0.22, 1, 0.36, 1)`: progress for time `x` (0..1).
-fn bezier_ease(x: f64) -> f64 {
-    let bez = |t: f64, a: f64, b: f64| 3.0 * (1.0 - t).powi(2) * t * a + 3.0 * (1.0 - t) * t * t * b + t.powi(3);
-    let (mut lo, mut hi) = (0.0, 1.0);
-    for _ in 0..28 {
-        let mid = (lo + hi) / 2.0;
-        if bez(mid, 0.22, 0.36) < x {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    bez((lo + hi) / 2.0, 1.0, 1.0)
+/// Blur and shadow back on once the chat has finished opening.
+#[tauri::command]
+fn glass_on(window: WebviewWindow) {
+    set_glass(&window, true);
 }
 
 /// Moves and resizes in ONE system call so the two never show out of step.
@@ -290,14 +351,11 @@ fn set_blur(window: WebviewWindow, enabled: bool) {
 }
 
 #[tauri::command]
-async fn set_mode(window: WebviewWindow, mode: String, animate: Option<bool>) -> Result<(), String> {
+async fn set_mode(window: WebviewWindow, mode: String, quiet: Option<bool>) -> Result<(), String> {
     // Routed through Rust rather than the JS setSize() API: with
     // decorations disabled (as this window has), Window.setSize() from the
     // frontend is known to silently no-op on some Tauri/Windows builds.
-    if mode == "widget" && animate == Some(true) && FULL_VIEW.load(Ordering::SeqCst) {
-        return glide_to_widget(window).await.map_err(|e| e.to_string());
-    }
-    apply_mode(&window, &mode).map_err(|e| e.to_string())
+    apply_mode(&window, &mode, quiet == Some(true)).map_err(|e| e.to_string())
 }
 
 /// Sets (or, when empty, clears) the global shortcut that brings Leo to the
@@ -350,7 +408,7 @@ pub fn run() {
             history::history_list,
             agent::history_open,
             agent::history_delete,
-            agent::history_clear,
+            agent::history_current,
             agent::agent_reset,
             interact::agent_answer,
             memory::memory_configure,
@@ -360,6 +418,10 @@ pub fn run() {
             mcp::mcp_status,
             mcp::mcp_set_inject,
             set_mode,
+            glass_off,
+            glass_on,
+            fly_to_orb,
+            fly_to_center,
             set_blur,
             set_shortcut,
             updater::check_for_updates
@@ -374,7 +436,7 @@ pub fn run() {
             let window = app
                 .get_webview_window("main")
                 .expect("main window must exist");
-            if let Err(err) = apply_mode(&window, "widget") {
+            if let Err(err) = apply_mode(&window, "widget", false) {
                 eprintln!("failed to position window: {err}");
                 let _ = window.show();
             }
@@ -399,19 +461,18 @@ pub fn run() {
 
 #[cfg(test)]
 mod glide_tests {
-    use super::bezier_ease;
+    use super::ease_in_out;
 
     #[test]
-    fn glide_curve_runs_from_zero_to_one_without_going_back() {
-        assert!(bezier_ease(0.0).abs() < 1e-6);
-        assert!((bezier_ease(1.0) - 1.0).abs() < 1e-6);
+    fn flight_curve_runs_from_zero_to_one_without_going_back() {
+        assert!(ease_in_out(0.0).abs() < 1e-9);
+        assert!((ease_in_out(1.0) - 1.0).abs() < 1e-9);
         let mut last = 0.0;
         for i in 1..=100 {
-            let v = bezier_ease(i as f64 / 100.0);
+            let v = ease_in_out(i as f64 / 100.0);
             assert!(v >= last, "curve went backwards at {i}");
             last = v;
         }
-        // An ease-out: most of the move happens early.
-        assert!(bezier_ease(0.3) > 0.6);
+        assert!((ease_in_out(0.5) - 0.5).abs() < 1e-9);
     }
 }

@@ -52,6 +52,8 @@ const MAX_OUTPUT_TOKENS: u32 = 4096;
 const JOB_LIMIT: Duration = Duration::from_secs(600);
 const TOO_SLOW: &str = "That is taking too long, so I stopped. Try again, or choose a faster model in settings.";
 
+const UNFINISHED_TEXT: &str = "The text you sent ends with an ellipsis, so it looks unfinished or cut short. Nothing was done. Write the complete text of this part, with no placeholders or ellipsis, and send it again. If the document needs more sections, add each one in its own following call until the whole document is written.";
+
 const BAD_ARGUMENTS: &str = "Your tool call could not be read: its arguments were not valid JSON, most likely because the message was cut off for being too long. Nothing was done. Try again with less text in the call. For a long document, create it with the first part, then add the rest in several smaller edits.";
 
 #[derive(Default)]
@@ -266,6 +268,27 @@ fn truncate(mut text: String) -> String {
     text
 }
 
+/// A Google Docs write whose text ends in an ellipsis: the model stopped in
+/// the middle of its own document ("... the European ...") and would leave it
+/// unfinished.
+fn writes_unfinished_text(name: &str, args: &str) -> bool {
+    if !is_doc_edit(name) && !is_doc_create(name) {
+        return false;
+    }
+    let Ok(v) = serde_json::from_str::<Value>(args) else {
+        return false;
+    };
+    ["content", "text"].iter().any(|k| {
+        v.get(*k)
+            .and_then(Value::as_str)
+            .map(|t| {
+                let t = t.trim_end();
+                t.ends_with('\u{2026}') || t.ends_with("...")
+            })
+            .unwrap_or(false)
+    })
+}
+
 fn is_doc_edit(name: &str) -> bool {
     matches!(
         name,
@@ -414,6 +437,9 @@ async fn execute_call(ctx: &Ctx, agent: AgentId, call: &ToolCall) -> Result<Stri
         // Checked before anything is shown to the user, so a cut-off call
         // never reaches an approval card.
         Err(BAD_ARGUMENTS.to_string())
+    } else if writes_unfinished_text(name, &call.function.arguments) {
+        // Checked before an approval card, like cut-off arguments.
+        Err(UNFINISHED_TEXT.to_string())
     } else if name == "ask_user" {
         let waiting_since = Instant::now();
         let answer = interact::ask_user(&ctx.app, &ctx.turn, ctx.my_turn, call).await;
@@ -609,7 +635,17 @@ pub async fn run_request(
 
     let my_turn = state.turn.fetch_add(1, Ordering::SeqCst) + 1;
     let user_text = text.clone();
-    let chat = ensure_chat(&app, state, &text);
+    let (chat, new_chat) = ensure_chat(&app, state, &text);
+    if let (Some(id), true) = (chat, new_chat) {
+        // The model names the chat from its first message, in the background.
+        tauri::async_runtime::spawn(crate::history::name_chat(
+            app.clone(),
+            api_key.clone(),
+            models.main.clone(),
+            id,
+            text.clone(),
+        ));
+    }
     let ctx = Ctx {
         app: app.clone(),
         api_key: api_key.clone(),
@@ -743,15 +779,26 @@ pub fn agent_reset(state: State<'_, AgentState>) {
 }
 
 /// The saved chat for this conversation, created with its first message.
-fn ensure_chat(app: &AppHandle, state: &AgentState, first_message: &str) -> Option<i64> {
+/// Also says whether the chat was just created (then it still needs a name).
+fn ensure_chat(app: &AppHandle, state: &AgentState, first_message: &str) -> (Option<i64>, bool) {
     let mut conv = state.conv.lock().unwrap();
+    let mut created = false;
     if conv.is_none() {
         match app.state::<Db>().create_chat(app, first_message) {
-            Ok(id) => *conv = Some(id),
+            Ok(id) => {
+                *conv = Some(id);
+                created = true;
+            }
             Err(err) => eprintln!("could not start a saved chat: {err}"),
         }
     }
-    *conv
+    (*conv, created)
+}
+
+/// The saved chat that is open now, for highlighting it in the sidebar.
+#[tauri::command]
+pub fn history_current(state: State<'_, AgentState>) -> Option<i64> {
+    *state.conv.lock().unwrap()
 }
 
 /// Opens a saved chat: the assistant carries on with its messages, its context
@@ -781,13 +828,6 @@ pub fn history_delete(app: AppHandle, state: State<'_, AgentState>, db: State<'_
     Ok(())
 }
 
-#[tauri::command]
-pub fn history_clear(app: AppHandle, state: State<'_, AgentState>, db: State<'_, Db>) -> Result<(), String> {
-    db.clear(&app)?;
-    agent_reset(state);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::arguments_are_valid;
@@ -804,6 +844,16 @@ mod tests {
         // Only edit tools are covered; other tools are not.
         assert_eq!(super::doc_id_for_edit("google__create_doc", &args), None);
         assert_eq!(super::doc_id_for_edit("google__modify_doc_text", "{}"), None);
+    }
+
+    #[test]
+    fn unfinished_document_text_is_refused() {
+        let call = |t: &str| format!(r#"{{"document_id":"x","text":"{t}"}}"#);
+        assert!(super::writes_unfinished_text("google__modify_doc_text", &call("built upon pre-war European \u{2026}")));
+        assert!(super::writes_unfinished_text("google__modify_doc_text", &call("and then...")));
+        assert!(!super::writes_unfinished_text("google__modify_doc_text", &call("A finished sentence.")));
+        // Only document writes are checked.
+        assert!(!super::writes_unfinished_text("web_search", &call("and then...")));
     }
 
     #[test]

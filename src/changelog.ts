@@ -10,6 +10,15 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.3.0",
+    features: [
+      "A new screen-off animation when you minimise Leo: the orb sinks, the window closes to a bright point that flies to the orb's spot and grows into the orb",
+      "Opening the chat plays that backwards, then the orb floats up",
+      "Chat history is now a sidebar that slides in and out",
+      "Every chat has its own delete button, and Leo names each chat for you",
+    ],
+  },
+  {
     version: "3.2.0",
     features: [
       "Minimising to the orb is smoother",

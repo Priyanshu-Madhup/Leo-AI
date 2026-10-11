@@ -8,6 +8,7 @@
     <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body data-mode="full">
+    <div id="flash" aria-hidden="true"></div>
     <div id="drag-strip" data-tauri-drag-region></div>
 
     <!-- Launch and update animations (see space.ts). -->
@@ -82,16 +83,15 @@
       </div>
 
       <div id="history" class="hidden" role="dialog" aria-modal="true" aria-labelledby="history-title">
-        <div class="sheet">
-          <div class="sheet-head">
+        <aside class="side">
+          <div class="side-head">
             <h2 id="history-title">Chats</h2>
             <button type="button" id="history-close" class="icon-btn" aria-label="Close chat history">
               <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
             </button>
           </div>
-          <div class="sheet-body" id="history-list"></div>
-          <div class="history-foot"><button type="button" id="history-clear" class="link-btn">Delete all chats</button></div>
-        </div>
+          <div id="history-list"></div>
+        </aside>
       </div>
 
       <div id="settings" class="hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">

@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::types::ChatMessage;
 
@@ -171,16 +171,16 @@ impl Db {
         })
     }
 
-    pub fn delete(&self, app: &AppHandle, chat: i64) -> Result<(), String> {
+    pub fn set_title(&self, app: &AppHandle, chat: i64, title: &str) -> Result<(), String> {
         self.run(app, |c| {
-            c.execute("DELETE FROM conversations WHERE id = ?1", params![chat])?;
+            c.execute("UPDATE conversations SET title = ?1 WHERE id = ?2", params![title, chat])?;
             Ok(())
         })
     }
 
-    pub fn clear(&self, app: &AppHandle) -> Result<(), String> {
+    pub fn delete(&self, app: &AppHandle, chat: i64) -> Result<(), String> {
         self.run(app, |c| {
-            c.execute("DELETE FROM conversations", [])?;
+            c.execute("DELETE FROM conversations WHERE id = ?1", params![chat])?;
             Ok(())
         })
     }
@@ -198,6 +198,45 @@ pub fn live_history(stored: &[StoredMessage], folded: usize) -> Vec<ChatMessage>
         out.remove(0);
     }
     out
+}
+
+const NAMER: &str = "You name chats. You are given the first message of a chat. Reply with a short title of 2 to 5 words that says what the chat is about, in the same language as the message. No quotes, no trailing punctuation, no emoji. Reply with the title only.";
+
+/// A model reply tidied into a title: first line, no quotes or end punctuation,
+/// at most `TITLE_CHARS` characters.
+fn clean_title(raw: &str) -> String {
+    let line = raw.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = line.trim_matches(|c: char| matches!(c, '"' | '\'' | '\u{201c}' | '\u{201d}' | '\u{2018}' | '\u{2019}' | '`' | '*' | '#'));
+    let line = line.trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!'));
+    line.trim().chars().take(TITLE_CHARS).collect()
+}
+
+/// Right after the first message of a chat, asks the model for a short name
+/// and stores it; the sidebar is told so it can show the new name. Until then
+/// the chat carries the start of the message as its name. A failure just
+/// leaves that placeholder.
+pub async fn name_chat(app: AppHandle, api_key: String, model: String, chat: i64, first_message: String) {
+    let clip: String = first_message.chars().take(1500).collect();
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": NAMER },
+            { "role": "user", "content": clip },
+        ],
+        "temperature": 0.3,
+        "max_tokens": 40,
+    });
+    crate::openrouter::cache_system_prompt(&mut body);
+    let Ok(reply) = crate::openrouter::quick_chat(&api_key, body).await else {
+        return;
+    };
+    let title = clean_title(&reply.content.unwrap_or_default());
+    if title.is_empty() {
+        return;
+    }
+    if app.state::<Db>().set_title(&app, chat, &title).is_ok() {
+        let _ = app.emit("history://titled", serde_json::json!({ "id": chat, "title": title }));
+    }
 }
 
 #[tauri::command]
@@ -229,6 +268,14 @@ mod tests {
         c.execute("DELETE FROM conversations WHERE id = 1", []).unwrap();
         let left: i64 = c.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn titles_are_tidied() {
+        assert_eq!(clean_title("\"Trip to Lisbon in May.\"\n(extra)"), "Trip to Lisbon in May");
+        assert_eq!(clean_title("**Fix my resume**"), "Fix my resume");
+        assert_eq!(clean_title("   \n  "), "");
+        assert!(clean_title(&"word ".repeat(40)).chars().count() <= TITLE_CHARS);
     }
 
     #[test]
