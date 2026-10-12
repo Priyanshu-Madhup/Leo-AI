@@ -254,6 +254,9 @@ const CRT_ON_MS = 639.6 * SLOW; // matches crt-on (the vertical part is 12% slow
 // The end of the opening (orb rise 2.1 s after a 50 ms offset, interface fade
 // 0.9 s) played backwards; these are not scaled by SLOW, like the opening.
 const INTRO_REVERSED_MS = 2150;
+// The minimise is 25% shorter than the opening it mirrors (--mfast in styles.css,
+// MINIMISE_SPEED in lib.rs for the flight): every wait in it is scaled by this.
+const MFAST = 0.75;
 let minimizing = false;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -278,30 +281,30 @@ async function playMinimize() {
   // 1. The end of the opening backwards: the interface fades out, the orb sinks.
   cls.add("sinking");
   orb.setHover(true);
-  await sleep(INTRO_REVERSED_MS);
+  await sleep(INTRO_REVERSED_MS * MFAST);
   orb.setHover(false);
   // 2. The window closes to a line, then to a point (the opening of the window
   //    backwards). The blur goes first, as it came last.
   cls.remove("sinking");
   cls.add("collapsing");
   void invoke("glass_off");
-  await sleep(CRT_ON_MS);
+  await sleep(CRT_ON_MS * MFAST);
   // 3. The window becomes the small orb window around the point, which lights up.
   await invoke("shrink_to_orb_window");
   document.body.dataset.mode = "widget";
   await viewportSettled();
   cls.add("dot-in");
-  await sleep(LAND_MS);
+  await sleep(LAND_MS * MFAST);
   // 4. The point flies back to the orb's place.
   await invoke("fly_to_orb");
   // 5. Its flare calms down.
   cls.remove("dot-in");
   cls.add("dot-unshine");
-  await sleep(SHINE_MS);
+  await sleep(SHINE_MS * MFAST);
   // 6. And it grows into the orb.
   cls.remove("collapsing", "dot-unshine");
   cls.add("unimploding");
-  await sleep(IMPLODE_MS);
+  await sleep(IMPLODE_MS * MFAST);
 }
 
 // Opening the chat plays the same thing backwards: the orb shrinks to a bright
@@ -479,7 +482,15 @@ interface PendingCard {
 let pendingCard: PendingCard | null = null;
 
 const YES_RE = /^\s*(yes|yeah|yep|yup|sure|ok|okay|allow|approve|confirm|send( it)?|go ahead|do it|please do)\b/i;
-const NO_RE = /^\s*(no|nope|nah|cancel|don'?t|stop|decline|deny)\b/i;
+const NO_RE = /^\s*(no|nope|nah|cancel|don'?t|do not|stop|decline|deny|skip|never ?mind|forget it|leave it|not now|not needed)\b/i;
+// A short reply that says it is not wanted ("it's not needed", "I don't need that") is a plain no.
+const NO_ANYWHERE_RE = /\b(no need|not needed|don'?t need|do not need|don'?t want|do not want|don'?t save|do not save)\b/i;
+
+/** A plain "no" (sent without a note, so it cannot be mistaken for "change it"). */
+function isRefusal(text: string): boolean {
+  const t = text.trim();
+  return NO_RE.test(t) || (t.split(/\s+/).length <= 6 && NO_ANYWHERE_RE.test(t));
+}
 
 function finishCard(
   card: PendingCard,
@@ -504,7 +515,7 @@ function answerPendingCard(text: string) {
     finishCard(card, { text: answer }, `You answered: ${answer}`);
   } else if (YES_RE.test(answer)) {
     finishCard(card, { allow: true }, "Allowed");
-  } else if (NO_RE.test(answer)) {
+  } else if (isRefusal(answer)) {
     finishCard(card, { allow: false }, "Declined");
   } else {
     finishCard(card, { allow: false, note: answer }, `Declined: ${answer}`);
@@ -627,7 +638,9 @@ function showApprovalCard(event: Extract<AgentEvent, { kind: "approval_request" 
   actions.append(allow, decline);
   el.append(actions);
 
-  addTextRow(el, "Or say what to change", "Revise", (note) => finishCard(card, { allow: false, note }, `Declined: ${note}`));
+  addTextRow(el, "Or say what to change", "Revise", (note) =>
+    isRefusal(note) ? finishCard(card, { allow: false }, "Declined") : finishCard(card, { allow: false, note }, `Declined: ${note}`),
+  );
 
   showCard(card);
   // Focus the confirm button so Enter or Space is enough to say yes.

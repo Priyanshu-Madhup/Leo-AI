@@ -1201,7 +1201,9 @@ body[data-mode="widget"] #whatsnew { display: none; }
 /* One knob for the speed of the minimise / open animations: 1 is the base
    speed, 1.15 is 15% slower. The JS timings (main.ts, SLOW) and the flight in
    Rust (lib.rs, FLIGHT_SECONDS) use the same factor. */
-:root { --slow: 1.15; }
+/* The minimise runs 25% shorter than the opening it mirrors: --mfast scales every
+   duration of the minimise sequence (the shape stays an exact reverse). */
+:root { --slow: 1.15; --mfast: 0.75; }
 
 #flash {
   position: fixed;
@@ -1234,7 +1236,7 @@ body.expanding {
    reverse. */
 body.collapsing #widget {
   background-color: rgba(22, 22, 26, 0.72);
-  animation: crt-on calc(0.6396s * var(--slow)) reverse forwards;
+  animation: crt-on calc(0.6396s * var(--slow) * var(--mfast)) reverse forwards;
 }
 
 /* Everything inside has already left (the intro played backwards); keep it
@@ -1437,13 +1439,13 @@ body.sinking #orb-wrap::after { animation: none !important; opacity: 0; }
 body.sinking { pointer-events: none; }
 
 body.sinking #orb-wrap {
-  animation: orb-rise 2.1s cubic-bezier(0.16, 0.84, 0.3, 1) 0.05s reverse both;
+  animation: orb-rise calc(2.1s * var(--mfast)) cubic-bezier(0.16, 0.84, 0.3, 1) calc(0.05s * var(--mfast)) reverse both;
   will-change: transform, opacity, filter;
 }
 
 body.sinking #topbar,
 body.sinking #chat {
-  animation: ui-in 0.9s ease reverse both;
+  animation: ui-in calc(0.9s * var(--mfast)) ease reverse both;
 }
 
 /* 2. The window closes to a line and then a point: body.collapsing above
@@ -1452,9 +1454,9 @@ body.sinking #chat {
 /* 3. In the small orb window the point lights up (the flare's fade-out
       reversed), 4. flies to the orb's place, 5. its flare calms down (the
       flare reversed), 6. and it grows into the orb (the shrink reversed). */
-body[data-mode="widget"].dot-in #flash { animation: dot-out-small calc(0.09s * var(--slow)) ease-in reverse both; }
-body[data-mode="widget"].dot-unshine #flash { animation: dot-shine-small calc(0.32s * var(--slow)) ease-out reverse both; }
+body[data-mode="widget"].dot-in #flash { animation: dot-out-small calc(0.09s * var(--slow) * var(--mfast)) ease-in reverse both; }
+body[data-mode="widget"].dot-unshine #flash { animation: dot-shine-small calc(0.32s * var(--slow) * var(--mfast)) ease-out reverse both; }
 
-body.unimploding #orb-wrap { animation: orb-implode calc(0.42s * var(--slow)) cubic-bezier(0.55, 0, 0.9, 0.5) reverse both; }
-body.unimploding #widget > :not(#orb-wrap) { animation: kids-out calc(0.15s * var(--slow)) ease-in reverse both; }
-body.unimploding #flash { animation: dot-appear calc(0.42s * var(--slow)) linear reverse both; }
+body.unimploding #orb-wrap { animation: orb-implode calc(0.42s * var(--slow) * var(--mfast)) cubic-bezier(0.55, 0, 0.9, 0.5) reverse both; }
+body.unimploding #widget > :not(#orb-wrap) { animation: kids-out calc(0.15s * var(--slow) * var(--mfast)) ease-in reverse both; }
+body.unimploding #flash { animation: dot-appear calc(0.42s * var(--slow) * var(--mfast)) linear reverse both; }

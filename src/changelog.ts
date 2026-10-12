@@ -10,6 +10,10 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.6.0",
+    features: ["Minimising is 25% faster"],
+  },
+  {
     version: "3.5.0",
     features: [
       "The orb widget is smaller and covers far less of your screen, with the orb itself unchanged",

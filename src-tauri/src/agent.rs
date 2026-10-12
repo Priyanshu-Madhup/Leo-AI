@@ -54,6 +54,13 @@ const TOO_SLOW: &str = "That is taking too long, so I stopped. Try again, or cho
 
 const UNFINISHED_TEXT: &str = "The text you sent ends with an ellipsis, so it looks unfinished or cut short. Nothing was done. Write the complete text of this part, with no placeholders or ellipsis, and send it again. If the document needs more sections, add each one in its own following call until the whole document is written.";
 
+/// A tool that keeps failing is not tried a fourth time in one request.
+const MAX_TOOL_FAILURES: usize = 3;
+/// A tool the user declined twice is not offered again; after this many
+/// declines of anything, every approval is stopped.
+const MAX_SAME_DECLINES: usize = 2;
+const MAX_TOTAL_DECLINES: usize = 3;
+
 const BAD_ARGUMENTS: &str = "Your tool call could not be read: its arguments were not valid JSON, most likely because the message was cut off for being too long. Nothing was done. Try again with less text in the call. For a long document, create it with the first part, then add the rest in several smaller edits.";
 
 #[derive(Default)]
@@ -162,6 +169,11 @@ pub struct Ctx {
     /// second create with the same title is refused (the agent edits the first
     /// instead of making copies).
     docs_created: Arc<Mutex<HashMap<String, String>>>,
+    /// Tools the user declined in this request (one entry per decline), shared
+    /// by every agent, so a "no" is remembered instead of tried another way.
+    declines: Arc<Mutex<Vec<String>>>,
+    /// How many times each tool has failed in this request.
+    failures: Arc<Mutex<HashMap<String, usize>>>,
     /// When the request gives up; moved back while waiting for the user.
     deadline: Arc<Mutex<Instant>>,
 }
@@ -255,6 +267,22 @@ impl Ctx {
         self.docs_created.lock().unwrap().get(&doc_title(args)?).cloned()
     }
 
+    fn note_decline(&self, tool: &str) {
+        self.declines.lock().unwrap().push(tool.to_string());
+    }
+
+    fn declined_block(&self, tool: &str) -> Option<String> {
+        decline_block(&self.declines.lock().unwrap(), tool)
+    }
+
+    fn too_many_failures(&self, tool: &str) -> bool {
+        self.failures.lock().unwrap().get(tool).copied().unwrap_or(0) >= MAX_TOOL_FAILURES
+    }
+
+    fn note_failure(&self, tool: &str) {
+        *self.failures.lock().unwrap().entry(tool.to_string()).or_insert(0) += 1;
+    }
+
     fn saved_facts(&self) -> Vec<String> {
         self.saved.lock().unwrap().clone()
     }
@@ -287,6 +315,19 @@ fn writes_unfinished_text(name: &str, args: &str) -> bool {
             })
             .unwrap_or(false)
     })
+}
+
+/// Why a tool that needs approval must not even be offered again, given what
+/// the user has already declined in this request.
+fn decline_block(declines: &[String], name: &str) -> Option<String> {
+    let same = declines.iter().filter(|d| d.as_str() == name).count();
+    if same >= MAX_SAME_DECLINES {
+        return Some("The user has already declined this action more than once in this request. Do not ask again, and do not look for another way to do the same thing: tell them you did not do it.".to_string());
+    }
+    if declines.len() >= MAX_TOTAL_DECLINES {
+        return Some("The user has declined several actions in this request. Stop trying: do not look for another way to do what they declined. Say briefly what you did not do, and ask what they would like instead.".to_string());
+    }
+    None
 }
 
 fn is_doc_edit(name: &str) -> bool {
@@ -482,6 +523,11 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
     let args = call.function.arguments.as_str();
 
     // Refused before anything is shown, so no tool row appears for it.
+    if ctx.too_many_failures(name) {
+        return Err(format!(
+            "This action has already failed {MAX_TOOL_FAILURES} times in this request. Do not try it again or look for a workaround: tell the user plainly what went wrong."
+        ));
+    }
     let web_use = match name {
         "web_search" => Some((&ctx.searches, MAX_SEARCHES, "searches")),
         "fetch_page" => Some((&ctx.page_reads, MAX_PAGE_READS, "page reads")),
@@ -511,12 +557,19 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
         && !ctx.doc_already_approved(name, args);
 
     if needs_approval {
+        // A "no" is remembered for the rest of the request.
+        if let Some(stop) = ctx.declined_block(name) {
+            return Err(stop);
+        }
         let waiting_since = Instant::now();
         let verdict = interact::approve(app, &ctx.turn, ctx.my_turn, call).await;
         ctx.extend(waiting_since.elapsed());
         match verdict? {
             Approval::Allowed => {}
-            Approval::Declined(message) => return Err(message),
+            Approval::Declined(message) => {
+                ctx.note_decline(name);
+                return Err(message);
+            }
         }
     }
 
@@ -546,6 +599,10 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
         {
             ctx.saved.lock().unwrap().push(fact);
         }
+    }
+
+    if matches!(&outcome, Err(e) if e != "cancelled") {
+        ctx.note_failure(name);
     }
 
     let title = tools::describe(name, args);
@@ -670,6 +727,8 @@ pub async fn run_request(
         saved: Arc::new(Mutex::new(Vec::new())),
         docs_approved: Arc::new(Mutex::new(HashSet::new())),
         docs_created: Arc::new(Mutex::new(HashMap::new())),
+        declines: Arc::new(Mutex::new(Vec::new())),
+        failures: Arc::new(Mutex::new(HashMap::new())),
         deadline: Arc::new(Mutex::new(Instant::now() + JOB_LIMIT)),
     };
 
@@ -856,6 +915,19 @@ mod tests {
         assert!(!super::writes_unfinished_text("google__modify_doc_text", &call("A finished sentence.")));
         // Only document writes are checked.
         assert!(!super::writes_unfinished_text("web_search", &call("and then...")));
+    }
+
+    #[test]
+    fn a_no_is_remembered() {
+        let d = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert!(super::decline_block(&d(&[]), "remember").is_none());
+        assert!(super::decline_block(&d(&["remember"]), "remember").is_none());
+        // The same tool declined twice: not offered again.
+        assert!(super::decline_block(&d(&["remember", "remember"]), "remember").is_some());
+        // Declined once, another tool is still allowed.
+        assert!(super::decline_block(&d(&["remember"]), "google__create_drive_file").is_none());
+        // Three declines of anything stop every approval.
+        assert!(super::decline_block(&d(&["remember", "google__create_drive_file", "open_app"]), "google__send_gmail_message").is_some());
     }
 
     #[test]

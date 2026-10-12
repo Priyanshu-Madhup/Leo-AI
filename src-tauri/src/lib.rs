@@ -242,6 +242,8 @@ fn widget_target(window: &WebviewWindow, saved: Option<(i32, i32)>) -> tauri::Re
 const ORB_CENTER_IN_WIDGET: (f64, f64) = (60.0, 60.0);
 /// How long the point takes to fly to the orb's place.
 const FLIGHT_SECONDS: f64 = 0.6 * 1.15; // 1.15 = SLOW in main.ts
+/// The minimise is 25% shorter than the opening it mirrors (MFAST in main.ts).
+const MINIMISE_SPEED: f64 = 0.75;
 
 fn ease_in_out(t: f64) -> f64 {
     if t < 0.5 {
@@ -304,7 +306,7 @@ async fn fly(window: WebviewWindow) -> tauri::Result<()> {
     // centre will be.
     let dot = (pos.x as f64 + size.width as f64 / 2.0, pos.y as f64 + size.height as f64 / 2.0);
     let goal = (to_x as f64 + ORB_CENTER_IN_WIDGET.0 * scale, to_y as f64 + ORB_CENTER_IN_WIDGET.1 * scale);
-    glide(&window, goal.0 - dot.0, goal.1 - dot.1).await
+    glide(&window, goal.0 - dot.0, goal.1 - dot.1, FLIGHT_SECONDS * MINIMISE_SPEED).await
 }
 
 /// Opening the chat: the orb has shrunk to a point inside the small window;
@@ -331,17 +333,17 @@ async fn fly_center(window: WebviewWindow) -> tauri::Result<()> {
 
     let dot = (pos.x as f64 + ORB_CENTER_IN_WIDGET.0 * scale, pos.y as f64 + ORB_CENTER_IN_WIDGET.1 * scale);
     let goal = (origin.x as f64 + area.width as f64 / 2.0, origin.y as f64 + area.height as f64 / 2.0);
-    glide(&window, goal.0 - dot.0, goal.1 - dot.1).await
+    glide(&window, goal.0 - dot.0, goal.1 - dot.1, FLIGHT_SECONDS).await
 }
 
 /// Moves the window (size unchanged) by `dx`, `dy` physical pixels with a
 /// smooth start and stop.
-async fn glide(window: &WebviewWindow, dx: f64, dy: f64) -> tauri::Result<()> {
+async fn glide(window: &WebviewWindow, dx: f64, dy: f64, seconds: f64) -> tauri::Result<()> {
     let pos = window.outer_position()?;
     let size = window.outer_size()?;
     let started = std::time::Instant::now();
     loop {
-        let t = (started.elapsed().as_secs_f64() / FLIGHT_SECONDS).min(1.0);
+        let t = (started.elapsed().as_secs_f64() / seconds).min(1.0);
         let e = ease_in_out(t);
         move_window(
             window,

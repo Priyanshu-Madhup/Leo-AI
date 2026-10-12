@@ -153,9 +153,11 @@ pub async fn approve(
     }
     let note = answer["note"].as_str().unwrap_or("").trim();
     Ok(Approval::Declined(if note.is_empty() {
-        "The user declined this action. Do not retry it; ask what they want instead.".to_string()
+        "The user said NO to this action. Do not do it, and do not look for another way to do the same thing (another tool, another place, another format). Tell them briefly that you did not do it, and carry on only with the parts of the request that did not need it.".to_string()
     } else {
-        format!("The user declined this action and said: {note}")
+        format!(
+            "The user declined this action and said: \"{note}\". If that asks for a change to what you were about to do (other wording, another file name, another recipient), make exactly that change and ask again. If it says no, or says it is not needed, or you cannot tell, then do NOT do the action or any other way of achieving it: tell them briefly that you did not do it."
+        )
     }))
 }
 
