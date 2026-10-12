@@ -10,6 +10,15 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.5.0",
+    features: [
+      "The orb widget is smaller and covers far less of your screen, with the orb itself unchanged",
+      "Soft ripples leave the orb while Leo is working or writing",
+      "The orb widget no longer shows what Leo is doing; the orb's animation says it",
+      "Minimising is now the exact reverse of opening",
+    ],
+  },
+  {
     version: "3.4.0",
     features: [
       "Your profile: add your name, birthday, location and interests in Settings, under Customise profile",

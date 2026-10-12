@@ -240,17 +240,20 @@ type Mode = "full" | "widget";
 let mode: Mode = "widget";
 document.body.dataset.mode = mode;
 
-// Minimising plays like a screen switching off: the top and bottom edges close
-// to the middle until it is a line, the sides close until it is a point, the
-// point flares bright, flies to where the orb lives, and grows into the orb.
+// Minimising is the opening played backwards, step by step, in the opposite
+// order (the animations are the same ones, run in reverse): the interface fades
+// out and the big orb sinks; the window closes to a line and then a point; the
+// window shrinks to the small orb window around that point and the point lights
+// up; it flies to where the orb lives; its flare calms down; and it grows into
+// the orb.
 const SLOW = 1.15; // same factor as --slow in styles.css
-const COLLAPSE_MS = 520 * SLOW; // matches crt-off
-const SHINE_MS = 320 * SLOW; // matches dot-shine
-const LAND_MS = 90 * SLOW; // matches dot-out
-const SINK_MS = 900 * SLOW; // matches the sinking orb (orb-rise reversed)
-const EMERGE_MS = 700 * SLOW; // matches orb-emerge
+const SHINE_MS = 320 * SLOW; // matches dot-shine-small
+const LAND_MS = 90 * SLOW; // matches dot-out-small
 const IMPLODE_MS = 420 * SLOW; // matches orb-implode
 const CRT_ON_MS = 639.6 * SLOW; // matches crt-on (the vertical part is 12% slower)
+// The end of the opening (orb rise 2.1 s after a 50 ms offset, interface fade
+// 0.9 s) played backwards; these are not scaled by SLOW, like the opening.
+const INTRO_REVERSED_MS = 2150;
 let minimizing = false;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -272,20 +275,33 @@ async function playMinimize() {
   closeHistory();
   closeWhatsNew();
   showCaption("");
-  // First the opening backwards: the interface fades and the big orb sinks to
-  // the bottom; then the window shuts.
+  // 1. The end of the opening backwards: the interface fades out, the orb sinks.
   cls.add("sinking");
-  await sleep(SINK_MS);
+  orb.setHover(true);
+  await sleep(INTRO_REVERSED_MS);
+  orb.setHover(false);
+  // 2. The window closes to a line, then to a point (the opening of the window
+  //    backwards). The blur goes first, as it came last.
   cls.remove("sinking");
   cls.add("collapsing");
   void invoke("glass_off");
-  await sleep(COLLAPSE_MS);
-  cls.add("shining");
-  await sleep(SHINE_MS);
-  // The window carries the point across the screen to the orb's place.
-  await invoke("fly_to_orb");
-  cls.add("landing");
+  await sleep(CRT_ON_MS);
+  // 3. The window becomes the small orb window around the point, which lights up.
+  await invoke("shrink_to_orb_window");
+  document.body.dataset.mode = "widget";
+  await viewportSettled();
+  cls.add("dot-in");
   await sleep(LAND_MS);
+  // 4. The point flies back to the orb's place.
+  await invoke("fly_to_orb");
+  // 5. Its flare calms down.
+  cls.remove("dot-in");
+  cls.add("dot-unshine");
+  await sleep(SHINE_MS);
+  // 6. And it grows into the orb.
+  cls.remove("collapsing", "dot-unshine");
+  cls.add("unimploding");
+  await sleep(IMPLODE_MS);
 }
 
 // Opening the chat plays the same thing backwards: the orb shrinks to a bright
@@ -339,11 +355,8 @@ async function setMode(next: Mode, fast = false) {
     await invoke("set_mode", { mode: next, quiet: opening });
   } finally {
     if (closing) {
-      // The orb grows out of the point, in the place the point flew to.
-      await viewportSettled();
-      cls.remove("collapsing", "shining", "landing");
-      cls.add("emerging");
-      window.setTimeout(() => cls.remove("emerging"), EMERGE_MS);
+      // The orb has grown out of the point in its place; clear the sequence.
+      document.body.classList.remove("sinking", "collapsing", "dot-in", "dot-unshine", "unimploding");
       minimizing = false;
     } else if (opening) {
       // The point opens into a line, and the line into the chat window.
@@ -758,7 +771,6 @@ void onAgentEvent(async (event) => {
   if (event.kind === "tool_start") {
     const state: ToolRowState = {};
     toolRows.set(event.id, state);
-    if (mode === "widget") showCaption(event.label);
 
     // The logo is loaded first, so the row appears with it already in place.
     const logo = await preloadLogo(findLogo(event.brand));

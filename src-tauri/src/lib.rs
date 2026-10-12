@@ -96,7 +96,18 @@ fn widget_pos(app: &AppHandle) -> Option<(i32, i32)> {
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
         if let Some(v) = saved {
             if let (Some(x), Some(y)) = (v["x"].as_i64(), v["y"].as_i64()) {
-                *WIDGET_POS.lock().unwrap() = Some((x as i32, y as i32));
+                let (mut x, mut y) = (x as i32, y as i32);
+                // A spot saved for the old, bigger window: move it so the orb
+                // stays exactly where it was on screen.
+                if v["v"].as_i64() != Some(2) {
+                    let scale = app
+                        .get_webview_window("main")
+                        .and_then(|w| w.scale_factor().ok())
+                        .unwrap_or(1.0);
+                    x += ((OLD_WIDGET_ORB_CENTER.0 - ORB_CENTER_IN_WIDGET.0) * scale).round() as i32;
+                    y += ((OLD_WIDGET_ORB_CENTER.1 - ORB_CENTER_IN_WIDGET.1) * scale).round() as i32;
+                }
+                *WIDGET_POS.lock().unwrap() = Some((x, y));
             }
         }
     }
@@ -109,7 +120,7 @@ fn save_widget_pos(app: &AppHandle) {
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(file, serde_json::json!({ "x": x, "y": y }).to_string());
+    let _ = std::fs::write(file, serde_json::json!({ "x": x, "y": y, "v": 2 }).to_string());
 }
 
 /// Keeps a restored position on a screen that still exists (a monitor may
@@ -142,7 +153,11 @@ fn place_widget(window: &WebviewWindow, saved: Option<(i32, i32)>) -> tauri::Res
     Ok(())
 }
 
-const WIDGET_SIZE: (f64, f64) = (160.0, 150.0);
+/// The orb window: the orb canvas is 110 px, so this is just a 5 px margin
+/// around it (it used to be 160x150, which left a big empty square on screen).
+const WIDGET_SIZE: (f64, f64) = (120.0, 120.0);
+/// The old size, only for moving a saved position to the new window.
+const OLD_WIDGET_ORB_CENTER: (f64, f64) = (80.0, 65.0);
 const FULL_SIZE: (f64, f64) = (440.0, 700.0);
 
 /// `quiet` (opening the chat inside the grow animation): no blur or shadow yet,
@@ -224,7 +239,7 @@ fn widget_target(window: &WebviewWindow, saved: Option<(i32, i32)>) -> tauri::Re
 
 /// Where the orb sits inside the 160x150 widget window (logical pixels); the
 /// bright point flies to this spot and the orb grows there.
-const ORB_CENTER_IN_WIDGET: (f64, f64) = (80.0, 65.0);
+const ORB_CENTER_IN_WIDGET: (f64, f64) = (60.0, 60.0);
 /// How long the point takes to fly to the orb's place.
 const FLIGHT_SECONDS: f64 = 0.6 * 1.15; // 1.15 = SLOW in main.ts
 
@@ -249,10 +264,30 @@ fn glass_off(window: WebviewWindow) {
     let _ = window.set_shadow(false);
 }
 
-/// The window, now showing only a bright point at its centre, carries that
-/// point across the screen to where the orb lives. The window keeps its size
-/// (the point is in the middle of it), so nothing reflows on the way; the
-/// frontend switches to the orb once it arrives.
+/// Minimising, after the window has closed to a point at its centre: the
+/// window becomes the small orb window around that same point (one call, so the
+/// point does not move). The point is then at the orb's centre of the small
+/// window. This is the reverse of what opening does last.
+#[tauri::command]
+fn shrink_to_orb_window(window: WebviewWindow) -> Result<(), String> {
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let centre = (pos.x as f64 + size.width as f64 / 2.0, pos.y as f64 + size.height as f64 / 2.0);
+    let (w, h) = ((WIDGET_SIZE.0 * scale).round() as u32, (WIDGET_SIZE.1 * scale).round() as u32);
+    move_window(
+        &window,
+        (centre.0 - ORB_CENTER_IN_WIDGET.0 * scale).round() as i32,
+        (centre.1 - ORB_CENTER_IN_WIDGET.1 * scale).round() as i32,
+        w,
+        h,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// The small orb window, showing a bright point at the orb's centre, carries
+/// that point across the screen to where the orb lives (the reverse of
+/// `fly_to_center`). The window keeps its size while it flies.
 #[tauri::command]
 async fn fly_to_orb(window: WebviewWindow) -> Result<(), String> {
     fly(window).await.map_err(|e| e.to_string())
@@ -423,6 +458,7 @@ pub fn run() {
             set_mode,
             glass_off,
             glass_on,
+            shrink_to_orb_window,
             fly_to_orb,
             fly_to_center,
             set_blur,

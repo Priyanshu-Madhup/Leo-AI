@@ -1223,44 +1223,25 @@ body[data-mode="widget"] #whatsnew { display: none; }
    big chat-window size instead of growing out of the point. */
 body.collapsing,
 body.imploding,
+body.unimploding,
 body.expanding {
   pointer-events: none;
   transition: none;
 }
 
-/* The window stays full size; the panel is clipped from top and bottom to a
-   line, then from the sides to a point. */
+/* Minimising is the opening played backwards (see the end of this file): the
+   window is clipped with the very same keyframes as the opening (crt-on), in
+   reverse. */
 body.collapsing #widget {
   background-color: rgba(22, 22, 26, 0.72);
-  animation: crt-off calc(0.52s * var(--slow)) forwards;
+  animation: crt-on calc(0.6396s * var(--slow)) reverse forwards;
 }
 
-/* The interface and the orb have already left (see "sinking" below); keep
-   them hidden while the window shuts. */
+/* Everything inside has already left (the intro played backwards); keep it
+   hidden while the window shuts. */
 body.collapsing #widget > * {
   animation: none;
   opacity: 0;
-}
-
-body.collapsing #flash { animation: dot-appear calc(0.52s * var(--slow)) linear forwards; }
-body.collapsing.shining #flash { animation: dot-shine calc(0.32s * var(--slow)) ease-out forwards; }
-body.collapsing.shining.landing #flash { animation: dot-out calc(0.09s * var(--slow)) ease-in forwards; }
-
-@keyframes crt-off {
-  0% {
-    clip-path: inset(0 0 0 0 round 8px);
-    background-color: rgba(22, 22, 26, 0.72);
-    animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5);
-  }
-  50% {
-    clip-path: inset(calc(50% - 1px) 0 calc(50% - 1px) 0 round 1px);
-    background-color: rgba(255, 255, 255, 0.95);
-    animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5);
-  }
-  100% {
-    clip-path: inset(calc(50% - 1px) calc(50% - 1px) calc(50% - 1px) calc(50% - 1px) round 2px);
-    background-color: rgba(255, 255, 255, 1);
-  }
 }
 
 @keyframes kids-out { to { opacity: 0; } }
@@ -1281,23 +1262,13 @@ body.collapsing.shining.landing #flash { animation: dot-out calc(0.09s * var(--s
   to { opacity: 0; transform: scale(0.5); }
 }
 
-/* The orb grows out of the point, brightest at first. */
-body.emerging #orb-wrap { animation: orb-emerge calc(0.7s * var(--slow)) cubic-bezier(0.22, 1, 0.36, 1) both; }
-
-@keyframes orb-emerge {
-  0% { transform: scale(0.04); opacity: 0; filter: brightness(4); }
-  30% { opacity: 1; }
-  70% { transform: scale(1.06); filter: brightness(1.5); }
-  100% { transform: scale(1); opacity: 1; filter: none; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   #flash { display: none; }
 }
 
 /* ---------- opening: the minimise played backwards ---------- */
 /* In the orb layout the bright point sits where the orb is. */
-body[data-mode="widget"] #flash { left: 80px; top: 65px; }
+body[data-mode="widget"] #flash { left: 60px; top: 60px; }
 
 body.imploding #orb-wrap { animation: orb-implode calc(0.42s * var(--slow)) cubic-bezier(0.55, 0, 0.9, 0.5) forwards; }
 body.imploding #widget > :not(#orb-wrap) { animation: kids-out calc(0.15s * var(--slow)) ease-in forwards; }
@@ -1341,9 +1312,9 @@ body.crt-on #widget { animation: crt-on calc(0.6396s * var(--slow)) forwards; }
   }
 }
 
-/* The orb window is only 160x150, so a big bloom would be cut off by its edge
+/* The orb window is only 120x120, so a big bloom would be cut off by its edge
    and show as a square. In the orb layout the point gets a tighter glow that
-   stays inside the window (its centre is 65px from the nearest edge). */
+   stays inside the window (its centre is 60px from every edge). */
 body[data-mode="widget"] #flash {
   box-shadow: 0 0 3px 1px #fff, 0 0 9px 3px rgba(255, 255, 255, 0.85), 0 0 16px 6px rgba(255, 255, 255, 0.5);
 }
@@ -1353,38 +1324,20 @@ body[data-mode="widget"].imploding.shining.landing #flash { animation: dot-out-s
 
 @keyframes dot-shine-small {
   0% { opacity: 1; transform: scale(1); }
-  40% { opacity: 1; transform: scale(2); }
-  100% { opacity: 1; transform: scale(1.5); }
+  40% { opacity: 1; transform: scale(1.8); }
+  100% { opacity: 1; transform: scale(1.4); }
 }
 
 @keyframes dot-out-small {
-  from { opacity: 1; transform: scale(1.5); }
+  from { opacity: 1; transform: scale(1.4); }
   to { opacity: 0; transform: scale(0.5); }
 }
 
 body.collapsing #widget,
 body.crt-on #widget { will-change: clip-path, background-color; }
-body.emerging #orb-wrap,
+body.unimploding #orb-wrap,
 body.imploding #orb-wrap { will-change: transform, opacity, filter; }
 
-/* ---------- minimising starts the way opening ends, backwards ---------- */
-/* The interface fades out and the big orb sinks to the bottom of the window:
-   the rise from the launch/opening animation (orb-rise) played in reverse. */
-body.sinking { pointer-events: none; }
-
-body.sinking #orb-wrap {
-  animation: orb-rise calc(0.9s * var(--slow)) cubic-bezier(0.16, 0.84, 0.3, 1) reverse both;
-  will-change: transform, opacity, filter;
-}
-
-body.sinking #topbar,
-body.sinking #chat {
-  animation: ui-leave calc(0.4s * var(--slow)) ease-in forwards;
-}
-
-@keyframes ui-leave {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateY(8px); }
 }
 
 /* ---------- profile: a second tab inside Settings ---------- */
@@ -1425,3 +1378,85 @@ body[data-mode="widget"] #profile-prompt { display: none; }
 .prompt-body { padding: 4px 18px 16px; }
 .prompt-body p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink); }
 .prompt-foot { justify-content: flex-end; }
+
+/* ---------- the orb widget ---------- */
+/* The window is just the orb plus a 5px margin, and it shows no text: what Leo
+   is doing is shown by the orb's own animation (and the ripples below). */
+body[data-mode="widget"] #orb-wrap { margin-top: 5px; }
+body[data-mode="widget"] #caption { display: none; }
+
+/* Ripples: while Leo is working or writing, soft rings leave the orb and fade
+   out. They stay inside the orb's 110px square, so the window never clips them. */
+body[data-mode="widget"] #orb-wrap::before,
+body[data-mode="widget"] #orb-wrap::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--orb-d);
+  height: var(--orb-d);
+  margin: calc(var(--orb-d) / -2) 0 0 calc(var(--orb-d) / -2);
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.6);
+  opacity: 0;
+  pointer-events: none;
+}
+
+body[data-mode="widget"] #widget[data-state="thinking"] #orb-wrap::before,
+body[data-mode="widget"] #widget[data-state="thinking"] #orb-wrap::after { animation: orb-ring 2.4s ease-out infinite; }
+body[data-mode="widget"] #widget[data-state="speaking"] #orb-wrap::before,
+body[data-mode="widget"] #widget[data-state="speaking"] #orb-wrap::after { animation: orb-ring 1.8s ease-out infinite; }
+body[data-mode="widget"] #widget[data-state] #orb-wrap::after { animation-delay: 0.9s; }
+
+@keyframes orb-ring {
+  0% { transform: scale(0.45); opacity: 0; }
+  18% { opacity: 0.7; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
+/* Not during the minimise / open sequences, and not with reduced motion. */
+body.imploding #orb-wrap::before,
+body.imploding #orb-wrap::after,
+body.unimploding #orb-wrap::before,
+body.unimploding #orb-wrap::after,
+body.sinking #orb-wrap::before,
+body.sinking #orb-wrap::after { animation: none !important; opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-mode="widget"] #orb-wrap::before,
+  body[data-mode="widget"] #orb-wrap::after { animation: none !important; opacity: 0; }
+}
+
+/* ---------- minimising: the opening played in reverse, step by step ---------- */
+/* Opening: orb shrinks to a point -> point flares -> window flies to the
+   middle -> flare fades -> point opens to a line and the window -> orb rises
+   and the interface fades in. Minimising runs the same animations with the
+   same keyframes, durations and easing, backwards, in the opposite order. */
+
+/* 1. The end of the opening backwards: the interface fades out and the big
+      orb sinks (the intro's ui-in and orb-rise, reversed). */
+body.sinking { pointer-events: none; }
+
+body.sinking #orb-wrap {
+  animation: orb-rise 2.1s cubic-bezier(0.16, 0.84, 0.3, 1) 0.05s reverse both;
+  will-change: transform, opacity, filter;
+}
+
+body.sinking #topbar,
+body.sinking #chat {
+  animation: ui-in 0.9s ease reverse both;
+}
+
+/* 2. The window closes to a line and then a point: body.collapsing above
+      (crt-on reversed). */
+
+/* 3. In the small orb window the point lights up (the flare's fade-out
+      reversed), 4. flies to the orb's place, 5. its flare calms down (the
+      flare reversed), 6. and it grows into the orb (the shrink reversed). */
+body[data-mode="widget"].dot-in #flash { animation: dot-out-small calc(0.09s * var(--slow)) ease-in reverse both; }
+body[data-mode="widget"].dot-unshine #flash { animation: dot-shine-small calc(0.32s * var(--slow)) ease-out reverse both; }
+
+body.unimploding #orb-wrap { animation: orb-implode calc(0.42s * var(--slow)) cubic-bezier(0.55, 0, 0.9, 0.5) reverse both; }
+body.unimploding #widget > :not(#orb-wrap) { animation: kids-out calc(0.15s * var(--slow)) ease-in reverse both; }
+body.unimploding #flash { animation: dot-appear calc(0.42s * var(--slow)) linear reverse both; }
