@@ -1338,8 +1338,6 @@ body.crt-on #widget { will-change: clip-path, background-color; }
 body.unimploding #orb-wrap,
 body.imploding #orb-wrap { will-change: transform, opacity, filter; }
 
-}
-
 /* ---------- profile: a second tab inside Settings ---------- */
 .head-title { display: flex; align-items: center; gap: 4px; margin-left: -6px; }
 .head-title .icon-btn.hidden { display: none; }
