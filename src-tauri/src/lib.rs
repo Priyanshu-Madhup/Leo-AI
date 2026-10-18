@@ -22,6 +22,8 @@ mod types;
 mod updater;
 mod verifier;
 mod vision;
+mod weather;
+mod widget;
 mod web;
 
 #[cfg(debug_assertions)]

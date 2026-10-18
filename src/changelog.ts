@@ -10,6 +10,14 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.7.0",
+    features: [
+      "Weather now appears as a card with an icon, and the week's forecast opens from a button",
+      "Leo can show answers as rounded cards with icons, such as scores, prices, schedules and comparisons",
+      "Interactive graphs: hover or touch a chart to see values, and tap a legend name to hide or show a line",
+    ],
+  },
+  {
     version: "3.6.0",
     features: ["Minimising is 25% faster"],
   },

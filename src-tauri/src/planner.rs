@@ -101,7 +101,7 @@ If the finished steps already answer the request, reply {{\"steps\":[]}} so the 
 
 const FINAL_PROMPT: &str = "You write Leo's final reply to the user after a job was carried out by several assistants. \
 Use only the verified results below; never invent anything. Lead with the outcome in one short sentence, then add details in Markdown (links, short lists) if they help. \
-Never mention agents, steps, tools or planning. If the job stopped early, say plainly what was completed and what was not and why, and ask how they would like to continue.";
+If a result contains a widget block, keep it at the start of your reply unchanged (or build a better one from the data). Never mention agents, steps, tools or planning. If the job stopped early, say plainly what was completed and what was not and why, and ask how they would like to continue.";
 
 fn clip(text: &str, max: usize) -> String {
     let mut out: String = text.chars().take(max).collect();
@@ -358,7 +358,7 @@ async fn finalize(ctx: &Ctx, goal: &str, done: &[Done], stopped: Option<&str>) -
     let body = json!({
         "model": ctx.models.main,
         "messages": [
-            { "role": "system", "content": FINAL_PROMPT },
+            { "role": "system", "content": format!("{FINAL_PROMPT} {}", crate::widget::GUIDE) },
             { "role": "user", "content": user },
         ],
         "temperature": 0.5,
@@ -367,7 +367,10 @@ async fn finalize(ctx: &Ctx, goal: &str, done: &[Done], stopped: Option<&str>) -
     let reply = quick_chat(&ctx.api_key, body).await?;
     let text = reply.content.unwrap_or_default();
     if !text.trim().is_empty() {
-        return Ok(text);
+        // A widget from a step must reach the chat even though this
+        // reply is written from a summary.
+        let block = done.iter().rev().find_map(|d| crate::widget::extract_block(&d.output));
+        return Ok(crate::widget::with_block(block, text));
     }
     // The model had nothing to say; fall back to the raw results.
     Ok(done.last().map(|d| d.output.clone()).unwrap_or_else(|| {

@@ -8,6 +8,8 @@
 // Supported: headings, paragraphs, bold, italic, inline code, fenced code,
 // links and bare URLs, bullet/numbered lists, block quotes, tables, rules.
 
+import { chartCard } from "./chart";
+
 const INLINE_RE =
   /(`[^`\n]+`)|(\*\*[^*\n]+?\*\*|__[^_\n]+?__)|(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])|(\*[^*\s][^*\n]*?\*|(?<![\w])_[^_\s][^_\n]*?_(?![\w]))/g;
 
@@ -92,6 +94,144 @@ function startsBlock(lines: string[], i: number): boolean {
   );
 }
 
+/**
+ * Widgets: a fenced `widget` block holds a JSON card spec written by the
+ * model (see widget.rs for the format). Icons come from the Iconify API by
+ * `prefix:name`; the name is checked before it goes into a URL. Everything is
+ * set with textContent, so nothing in the spec can become markup.
+ */
+const ICON_API = "https://api.iconify.design/";
+const ICON_RE = /^([a-z0-9]+(?:-[a-z0-9]+)*):([a-z0-9]+(?:-[a-z0-9]+)*)$/;
+/** Single-colour outline sets draw in black by default; the chat is dark, so they get the text colour. */
+const MONO_SETS = new Set(["lucide", "tabler", "ph", "mdi", "ri", "feather", "heroicons", "carbon", "bi", "fluent", "material-symbols", "solar", "iconoir"]);
+const MAX_ROWS = 24;
+const MAX_CHIPS = 10;
+
+type Spec = Record<string, unknown>;
+
+const str = (v: unknown, max = 160): string =>
+  typeof v === "string" || typeof v === "number" ? String(v).slice(0, max) : "";
+const isObj = (v: unknown): v is Spec => !!v && typeof v === "object" && !Array.isArray(v);
+
+function iconEl(name: unknown, cls: string): HTMLImageElement | null {
+  const m = typeof name === "string" ? ICON_RE.exec(name.trim().toLowerCase()) : null;
+  if (!m) return null;
+  const img = document.createElement("img");
+  img.className = cls;
+  img.alt = "";
+  img.loading = "lazy";
+  img.src = `${ICON_API}${m[1]}/${m[2]}.svg${MONO_SETS.has(m[1]) ? "?color=%23eceef1" : ""}`;
+  // An icon that doesn't exist or can't load (offline) just leaves the card without it.
+  img.onerror = () => img.remove();
+  return img;
+}
+
+function textEl(cls: string, text: string): HTMLElement | null {
+  if (!text) return null;
+  const el = document.createElement("div");
+  el.className = cls;
+  el.textContent = text;
+  return el;
+}
+
+function widgetCard(json: string): HTMLElement | null {
+  let spec: unknown;
+  try {
+    spec = JSON.parse(json);
+  } catch {
+    return null; // half-written or invalid: draw nothing
+  }
+  if (!isObj(spec)) return null;
+  const title = str(spec.title);
+  const value = str(spec.value, 40);
+  if (!title && !value) return null;
+
+  const card = document.createElement("div");
+  card.className = "widget";
+
+  const top = document.createElement("div");
+  top.className = "widget-top";
+  const main = document.createElement("div");
+  main.className = "widget-main";
+  const sub = str(spec.subtitle);
+  for (const el of [
+    textEl("widget-title", title),
+    textEl("widget-sub", sub),
+    textEl("widget-value", value),
+    textEl("widget-caption", str(spec.caption)),
+  ]) {
+    if (el) main.append(el);
+  }
+  top.append(main);
+  const big = iconEl(spec.icon, "widget-icon");
+  if (big) top.append(big);
+  card.append(top);
+
+  if (Array.isArray(spec.chips) && spec.chips.length) {
+    const chips = document.createElement("div");
+    chips.className = "widget-chips";
+    for (const c of spec.chips.slice(0, MAX_CHIPS)) {
+      const text = isObj(c) ? str(c.text, 60) : str(c, 60);
+      if (!text) continue;
+      const chip = document.createElement("span");
+      chip.className = "widget-chip";
+      const ic = isObj(c) ? iconEl(c.icon, "widget-chip-icon") : null;
+      if (ic) chip.append(ic);
+      chip.append(document.createTextNode(text));
+      chips.append(chip);
+    }
+    if (chips.childElementCount) card.append(chips);
+  }
+
+  const rows = document.createElement("div");
+  rows.className = "widget-rows";
+  if (Array.isArray(spec.rows)) {
+    for (const r of spec.rows.slice(0, MAX_ROWS)) {
+      if (!isObj(r)) continue;
+      const row = document.createElement("div");
+      row.className = "widget-row";
+      const ic = iconEl(r.icon, "widget-row-icon");
+      if (ic) row.append(ic);
+      const label = document.createElement("div");
+      label.className = "widget-row-label";
+      label.textContent = str(r.label, 80);
+      const note = textEl("widget-row-note", str(r.note, 100));
+      if (note) label.append(note);
+      const val = document.createElement("div");
+      val.className = "widget-row-value";
+      val.textContent = str(r.value, 60);
+      row.append(label, val);
+      rows.append(row);
+    }
+  }
+  if (rows.childElementCount) {
+    const expandLabel = str(spec.expandLabel, 40);
+    if (expandLabel) {
+      const body = document.createElement("div");
+      body.className = "widget-expand";
+      body.append(rows);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "widget-toggle";
+      btn.setAttribute("aria-expanded", "false");
+      btn.append(document.createTextNode(expandLabel));
+      const chev = iconEl("lucide:chevron-down", "widget-chevron");
+      if (chev) btn.append(chev);
+      btn.addEventListener("click", () => {
+        const open = card.classList.toggle("open");
+        btn.setAttribute("aria-expanded", String(open));
+      });
+      card.append(btn, body);
+    } else {
+      card.append(rows);
+    }
+  }
+
+  const footer = textEl("widget-footer", str(spec.footer));
+  if (footer) card.append(footer);
+  return card;
+}
+
 export function renderMarkdown(source: string, root: HTMLElement) {
   root.replaceChildren();
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
@@ -106,10 +246,17 @@ export function renderMarkdown(source: string, root: HTMLElement) {
     }
 
     if (FENCE_RE.test(line)) {
+      const lang = FENCE_RE.exec(line)![1];
       const code: string[] = [];
       i++;
       while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
       i++; // closing fence (or end of text)
+      if (lang === "widget" || lang === "chart") {
+        // A widget or chart, not code. Half-written data draws nothing until it is whole.
+        const widget = (lang === "chart" ? chartCard : widgetCard)(code.join("\n"));
+        if (widget) root.append(widget);
+        continue;
+      }
       const pre = document.createElement("pre");
       const codeEl = document.createElement("code");
       codeEl.textContent = code.join("\n");

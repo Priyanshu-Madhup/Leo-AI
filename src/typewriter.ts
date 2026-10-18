@@ -242,6 +242,14 @@ export function createStreamTyper(root: HTMLElement, onTick?: () => void): Strea
       let count = Math.floor(budget);
       budget -= count;
       while (count-- > 0 && shown < received.length) {
+        // A widget or chart block is data for a card: show it whole, never typed out.
+        const block = /^```(?:widget|chart)/.exec(received.slice(shown, shown + 10));
+        if (block) {
+          const close = received.indexOf("\n```", shown + block[0].length);
+          if (close < 0) break; // still arriving
+          shown = close + 4;
+          continue;
+        }
         const ch = received[shown++];
         // A brief beat at the end of a sentence reads more naturally.
         if (ch === "." || ch === "!" || ch === "?" || ch === "\n") {

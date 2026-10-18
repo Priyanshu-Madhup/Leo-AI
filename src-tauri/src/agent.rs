@@ -397,6 +397,9 @@ pub fn run_agent<'a>(
         }
         let mut messages = history;
         let mut empty_retries = 0;
+        // A widget block from a tool result, kept so the reply
+        // always carries it even if the model forgets to paste it.
+        let mut widget_block: Option<String> = None;
 
         for _ in 0..MAX_ITERATIONS {
             ctx.check()?;
@@ -452,12 +455,15 @@ pub fn run_agent<'a>(
                     }
                     return Ok("I couldn't work out how to do that with the tools I have.".to_string());
                 }
-                return Ok(text);
+                return Ok(crate::widget::with_block(widget_block, text));
             }
 
             for call in calls {
                 ctx.check()?;
                 let content = execute_call(ctx, agent, &call).await?;
+                if let Some(block) = crate::widget::extract_block(&content) {
+                    widget_block = Some(block);
+                }
                 messages.push(ChatMessage::tool_result(&call.id, content));
             }
         }

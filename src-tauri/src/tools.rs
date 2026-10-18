@@ -108,7 +108,7 @@ fn base_definitions() -> serde_json::Value {
             "type": "function",
             "function": {
                 "name": "web_search",
-                "description": "Search the web for current information: news, facts that may have changed, anything you are not sure of. Returns titles, links and short snippets. Follow up with fetch_page when a snippet is not enough.",
+                "description": "Search the web for current information: news, facts that may have changed, anything you are not sure of. Not for weather: use get_weather for that. Returns titles, links and short snippets. Follow up with fetch_page when a snippet is not enough.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -131,6 +131,19 @@ fn base_definitions() -> serde_json::Value {
                         "url": { "type": "string", "description": "Full http(s) URL of the page." }
                     },
                     "required": ["url"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get the current weather and today's outlook for a city. The result contains a ready-made weather widget block: begin your reply with that block exactly as given, then write the details below it. Leave `location` empty for the user's own location.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": { "type": "string", "description": "City name, e.g. \"Mumbai\". Empty for the user's location." }
+                    }
                 }
             }
         },
@@ -282,6 +295,7 @@ pub fn present(name: &str, args: &str) -> Presentation {
     match name {
         "current_datetime" => plain("Checking the time", None, Brand::branded(&["clock"], "clock")),
         "get_location" => plain("Finding your location", None, Brand::icon("globe")),
+        "get_weather" => plain("Checking the weather", some(field("location")), Brand::icon("globe")),
         "web_search" => plain("Searching the web", some(field("query")), Brand::branded(&["web-search"], "globe")),
         "fetch_page" => match host_of(&field("url")) {
             Some(host) => plain("Reading a page", Some(host.clone()), Brand::site(&host)),
@@ -390,6 +404,7 @@ pub async fn execute(app: &AppHandle, name: &str, args: &str) -> Result<String, 
             crate::web::search(&key, args).await
         }
         "fetch_page" => crate::web::fetch(args).await,
+        "get_weather" => crate::weather::get(app, args).await,
         "look_at_screen" => Err("The screen is read through the agent loop.".to_string()),
         "open_url" => open_url(app, args),
         "open_app" => open_app(app, args),
