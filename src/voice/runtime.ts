@@ -235,6 +235,17 @@ export class VoiceRuntime {
     this.speakAll(this.chunker.push(delta));
   }
 
+  /**
+   * A line spoken on its own while Leo works ("Sure, I'm checking the weather").
+   * Unlike streamed reply text it does not count as the reply, so a reply that
+   * arrives whole afterwards (a plan's final answer) is still spoken in full.
+   */
+  narrate(text: string): void {
+    if (!this.accepting) return;
+    this.speakAll(this.chunker.flush()); // keep what was already written ahead of it
+    this.speakAll([text]);
+  }
+
   /** A pause in Leo's text (it is about to run a tool): speak what has been written so far, even without a closing stop. */
   flushLeoText(): void {
     if (!this.accepting) return;

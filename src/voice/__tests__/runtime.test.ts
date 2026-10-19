@@ -175,6 +175,23 @@ describe("VoiceRuntime", () => {
     expect(h.tts.spoken).toEqual(["Sure, let me look up Elon Musk online."]);
   });
 
+  it("still speaks a reply that arrives whole after narration lines (plan route)", async () => {
+    const h = harness();
+    await h.runtime.start();
+    await userSays(h, "Email Priya the report please.");
+    h.runtime.narrate("Sure, let me find the address first.");
+    await tick();
+    h.runtime.narrate("Got it, now I will write the email.");
+    await tick();
+    h.runtime.endLeoText("Done, the email is on its way to Priya.");
+    await tick();
+    expect(h.tts.spoken).toEqual([
+      "Sure, let me find the address first.",
+      "Got it, now I will write the email.",
+      "Done, the email is on its way to Priya.",
+    ]);
+  });
+
   it("speaks the whole reply when nothing streamed (plan route)", async () => {
     const h = harness();
     await h.runtime.start();

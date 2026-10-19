@@ -97,6 +97,10 @@ pub(crate) enum AgentEvent {
     /// A piece of the reply as the model writes it (only for replies that go
     /// straight to the user).
     Delta { text: String },
+    /// A line only the voice speaks, never shown: said when a tool starts and the
+    /// model did not say anything itself ("Sure, I'm checking the weather for
+    /// Bengaluru."). The tool row on screen already says the same in writing.
+    Narrate { text: String },
     /// A short line Leo says before a step of a plan ("Let me check your
     /// calendar first."), shown and spoken as a message of its own.
     Say { text: String },
@@ -456,6 +460,20 @@ pub fn run_agent<'a>(
                 return Ok(crate::widget::with_block(widget_block, text));
             }
 
+            // The model often goes straight to a tool without a word. For the
+            // voice, say what is happening anyway (the model's own lead-in, when
+            // there is one, is spoken as it streams).
+            if ctx.stream && ctx.depth == 0 && text.trim().is_empty() {
+                let mcp = ctx.app.state::<crate::mcp::McpManager>();
+                let line = calls
+                    .iter()
+                    .filter(|c| !mcp.requires_approval(&c.function.name))
+                    .find_map(|c| narration_line(&c.function.name, &c.function.arguments, &c.id));
+                if let Some(text) = line {
+                    emit(&ctx.app, AgentEvent::Narrate { text });
+                }
+            }
+
             for call in calls {
                 ctx.check()?;
                 let content = execute_call(ctx, agent, &call).await?;
@@ -468,6 +486,27 @@ pub fn run_agent<'a>(
 
         Err("Stopped after too many steps without finishing.".to_string())
     })
+}
+
+/// What Leo says aloud as a tool starts, built from the tool's own plain-language
+/// title: "Sure, I'm searching the web for latest news." Quick background
+/// lookups, questions and approvals are not announced.
+fn narration_line(name: &str, args: &str, call_id: &str) -> Option<String> {
+    if matches!(name, "current_datetime" | "get_location" | "recall_memory" | "remember" | "ask_user") {
+        return None;
+    }
+    let p = tools::present(name, args);
+    let mut title = p.title.trim().trim_end_matches(['\u{2026}', '.']).to_string();
+    let first = title.chars().next()?;
+    title = format!("{}{}", first.to_lowercase(), &title[first.len_utf8()..]);
+    // Only a short subject is worth reading out (a place, a short search).
+    let subject = match name {
+        "web_search" | "get_weather" => p.detail.filter(|d| d.chars().count() <= 40).map(|d| format!(" for {d}")),
+        _ => None,
+    };
+    let openers = ["Sure, I'm", "One moment, I'm", "Okay, I'm"];
+    let opener = openers[call_id.bytes().map(usize::from).sum::<usize>() % openers.len()];
+    Some(format!("{opener} {title}{}.", subject.unwrap_or_default()))
 }
 
 /// Runs one tool call for `agent` and returns the text to hand back to the
@@ -947,6 +986,21 @@ pub fn history_delete(app: AppHandle, state: State<'_, AgentState>, db: State<'_
 #[cfg(test)]
 mod tests {
     use super::arguments_are_valid;
+
+    #[test]
+    fn tools_are_announced_in_plain_words() {
+        let line = super::narration_line("get_weather", r#"{"location":"Bengaluru"}"#, "a").unwrap();
+        assert!(line.ends_with("checking the weather for Bengaluru."), "{line}");
+        let line = super::narration_line("web_search", r#"{"query":"Elon Musk current roles"}"#, "b").unwrap();
+        assert!(line.contains("searching the web for Elon Musk current roles"), "{line}");
+        // A long query is not read out.
+        let long = format!(r#"{{"query":"{}"}}"#, "x".repeat(80));
+        assert!(!super::narration_line("web_search", &long, "c").unwrap().contains(" for "));
+        // Background lookups and questions stay quiet.
+        for quiet in ["current_datetime", "get_location", "recall_memory", "remember", "ask_user"] {
+            assert!(super::narration_line(quiet, "{}", "d").is_none(), "{quiet}");
+        }
+    }
 
     #[test]
     fn docs_are_approved_once_per_document() {

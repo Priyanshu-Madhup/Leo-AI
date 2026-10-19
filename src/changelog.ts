@@ -10,6 +10,10 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.8.1",
+    features: ["With voice on, Leo now says out loud what it is doing as it works, such as checking the weather or searching the web"],
+  },
+  {
     version: "3.8.0",
     features: [
       "Talk to Leo: tap the microphone, speak, and Leo answers out loud. Speak over Leo to interrupt it at any time",

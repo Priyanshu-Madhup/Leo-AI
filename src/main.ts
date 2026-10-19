@@ -802,6 +802,12 @@ void onAgentEvent(async (event) => {
     voice.runtime.feedLeoText(event.text);
     return;
   }
+  if (event.kind === "narrate") {
+    // Spoken only: the tool row on screen already says the same in writing.
+    if (!deltasOpen) return;
+    voice.runtime.narrate(event.text);
+    return;
+  }
   if (event.kind === "say") {
     // A line Leo says before a step of a plan; it stays as a message of its own.
     if (!deltasOpen) return;
@@ -811,9 +817,7 @@ void onAgentEvent(async (event) => {
       },
       onDone: resumeWorking,
     });
-    voice.runtime.feedLeoText(`${event.text}
-`);
-    voice.runtime.flushLeoText();
+    voice.runtime.narrate(event.text);
     return;
   }
   if (event.kind === "ask_user") {

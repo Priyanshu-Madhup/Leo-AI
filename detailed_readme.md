@@ -1,6 +1,6 @@
 # Leo — detailed project guide
 
-This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.8.0.**
+This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.8.1.**
 
 > Project root: `P:\Leo\siri-orb` (the app; it is the root of the GitHub repo `Priyanshu-Madhup/Leo-AI`). `README.md` is the short user-facing page (install, release steps). One level up, `P:\Leo\Leo_ Functionalities.excalidraw` is the original feature diagram.
 
@@ -511,6 +511,7 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 
 ## 25. Version history (high level)
 
+- **3.8.1**: guaranteed spoken narration of tool steps (end of section 27).
 - **3.8.0**: voice (section 26), Leo narrates what it is doing (27), image attachments (28).
 - **3.7.0**: weather card, rounded widgets with icons, interactive graphs.
 - **3.6.0**: minimise 25% shorter (still the exact reverse of open); a "no" is remembered for the request and failing tools are not retried endlessly; lists and notes are saved through Sheets/Docs.
@@ -573,3 +574,5 @@ Voice is an **input/output layer around the existing text path**. There is one b
 - **Backend**: `agent_run` takes `images: Option<Vec<String>>` (data URLs; at most 6, 8 MB each, validated in `clean_images`). `ChatMessage.images` is skipped by serde and `ChatMessage` serialises such a message as OpenAI multimodal content (text part + `image_url` parts), so every agent loop sends them unchanged. A message with images skips the router and goes straight to the Google agent (or the utility agent if Google is not connected), because plan steps pass text only.
 - **Memory of images**: only the newest 2 messages with images keep them in the conversation sent to the model (`drop_old_images`); older ones are replaced by a note. Images are never saved: the chat history stores the text plus "(attached N images)", so a reopened chat shows no pictures.
 - The main model must accept images (same requirement as `look_at_screen`); otherwise the error gets a hint to pick another model.
+
+**Guaranteed spoken narration (added after 3.8.0):** the prompt rule alone was unreliable (the model often calls a tool with no lead-in). In `run_agent`, when a round at depth 0 streams no text before its tool calls, `narration_line()` builds a line from the tool's plain-language title ("Sure, I'm checking the weather for Bengaluru.") and emits a `narrate` event. It is **voice only** (the tool row on screen says the same), skips quiet lookups (date, location, memory, questions) and tools that need an approval card. The frontend passes it to `VoiceRuntime.narrate()`, which speaks it without counting as the reply, so a plan's whole final answer is still spoken after the per-step `say` lines (earlier those used `feedLeoText`, which would have suppressed the final answer). Speech still waits for Kokoro, so on slow hardware a short tool may finish before its line is heard.

@@ -18,6 +18,7 @@ export type AgentEvent =
   | { kind: "progress"; text: string }
   | { kind: "delta"; text: string }
   | { kind: "say"; text: string }
+  | { kind: "narrate"; text: string }
   | { kind: "ask_user"; id: string; question: string; options: AskOption[] }
   | { kind: "approval_request"; id: string; name: string; label: string; args: Record<string, unknown> };
 
