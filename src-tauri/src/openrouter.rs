@@ -325,6 +325,7 @@ impl StreamAccumulator {
             content: if self.content.is_empty() { None } else { Some(self.content) },
             tool_calls: if calls.is_empty() { None } else { Some(calls) },
             tool_call_id: None,
+            images: Vec::new(),
         }
     }
 }

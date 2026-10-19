@@ -38,6 +38,8 @@ struct Step {
     agent: AgentId,
     task: String,
     expected: String,
+    /// One short, friendly sentence Leo says just before the step starts.
+    say: String,
     /// A look-around step: after it passes, the planner always reviews the
     /// rest of the plan against what it found.
     scout: bool,
@@ -60,7 +62,7 @@ const AGENTS_TEXT: &str = "- utility: the general assistant. Web search and read
 const GOOGLE_RULES: &str = "- Anything inside the user's Google account (a document, spreadsheet, slide deck, Drive file, email, event or contact) can ONLY be read or changed by the google agent. The utility agent cannot open them: a web address for a Google document does not work for it.\n\
 - Never split one job that a single agent can do from start to finish (for example: read a document and rewrite it) into several steps. Results passed between steps are shortened, so a whole document cannot be carried from one step to the next. Put the whole job in one step.\n";
 
-const FORMAT_TEXT: &str = "Reply with only JSON: {\"steps\":[{\"agent\":\"utility\"|\"google\",\"task\":\"...\",\"expected\":\"...\",\"scout\":true|false}]}";
+const FORMAT_TEXT: &str = "Reply with only JSON: {\"steps\":[{\"agent\":\"utility\"|\"google\",\"task\":\"...\",\"expected\":\"...\",\"say\":\"...\",\"scout\":true|false}]}";
 
 fn plan_prompt(google_ready: bool) -> String {
     let availability = if google_ready {
@@ -79,6 +81,7 @@ Rules:\n\
 - Write `expected` loosely for research: \"a short summary of what was found, with sources\". Never demand specific facts the web may not have; say what could not be found instead.\n\
 - Keep any action that changes something (sending an email, creating a document, changing an event) as its own step, after the lookups it depends on, unless one agent can do the whole job itself.\n\
 - If the user did not say something a step needs and it can't be looked up, still plan the step: the agent will ask the user.\n\
+- `say`: one short, warm sentence Leo says to the user just before the step starts, in the user's language and plain words, e.g. \"Sure, let me look up Elon Musk online.\" or \"Got it, now let me check your calendar.\" Later steps build on what came before. No tool, agent or service names. Leave it empty for a quick background lookup the user does not need to hear about.\n\
 - At most {MAX_STEPS} steps.\n{FORMAT_TEXT}"
     )
 }
@@ -94,7 +97,7 @@ fn revise_prompt(google_ready: bool) -> String {
 You are given the request, the steps already finished (verified), the step that went wrong or the finding that changes things, and the steps that were still to come. \
 Write the REMAINING steps only: do not repeat finished work, and change the approach if a step failed (a different query, asking the user, another agent). \
 If a research step failed only because the web had little or no answer, do not search again with other wording: continue with what was found, or give up and say what was missing. \
-Same rules as before: self-contained tasks, a concrete `expected` for each, at most {MAX_STEPS} steps.\n{GOOGLE_RULES}\
+Same rules as before: self-contained tasks, a concrete `expected` for each, a short friendly `say` for each (one sentence, plain words, building on what already happened), at most {MAX_STEPS} steps.\n{GOOGLE_RULES}\
 If the finished steps already answer the request, reply {{\"steps\":[]}} so the answer is written now. If the job cannot be done, reply {{\"steps\":[],\"give_up\":\"why, in one sentence\"}}.\n{FORMAT_TEXT}"
     )
 }
@@ -136,6 +139,7 @@ fn parse_steps(value: &Value, google_ready: bool) -> Result<VecDeque<Step>, Stri
             agent,
             task,
             expected: s["expected"].as_str().unwrap_or("").trim().to_string(),
+            say: s["say"].as_str().unwrap_or("").trim().to_string(),
             scout: s["scout"].as_bool().unwrap_or(false),
         });
         if steps.len() >= MAX_STEPS {
@@ -219,6 +223,9 @@ pub async fn run_job(ctx: &Ctx, chat: &[ChatMessage]) -> Result<String, String> 
 
     while let Some(step) = steps.pop_front() {
         ctx.check()?;
+        if !step.say.is_empty() {
+            crate::agent::emit(&ctx.app, crate::agent::AgentEvent::Say { text: step.say.clone() });
+        }
         ctx.progress(&format!("Step {} of {}: {}", done.len() + 1, done.len() + 1 + steps.len(), clip(&step.task, 70)));
         match run_step(ctx, &goal, &done, &step).await? {
             StepOutcome::Verified { output, replan } => {
@@ -412,7 +419,7 @@ mod tests {
     #[test]
     fn step_message_carries_results_and_feedback_but_not_later_steps() {
         let done = vec![Done { agent: AgentId::Utility, task: "Find city".into(), output: "Bangalore".into() }];
-        let step = Step { agent: AgentId::Utility, task: "Get the weather".into(), expected: "Temperature".into(), scout: false };
+        let step = Step { agent: AgentId::Utility, task: "Get the weather".into(), expected: "Temperature".into(), say: String::new(), scout: false };
         let m = step_message("weather please", &done, &step, Some("no temperature given"), "");
         assert!(m.contains("weather please"));
         assert!(m.contains("Bangalore"));

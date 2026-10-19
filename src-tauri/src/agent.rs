@@ -97,9 +97,9 @@ pub(crate) enum AgentEvent {
     /// A piece of the reply as the model writes it (only for replies that go
     /// straight to the user).
     Delta { text: String },
-    /// The streamed text turned out not to be the final reply (the model went
-    /// on to call a tool), so the UI should drop it.
-    DeltaReset,
+    /// A short line Leo says before a step of a plan ("Let me check your
+    /// calendar first."), shown and spoken as a message of its own.
+    Say { text: String },
     /// What Leo is doing right now, in plain words ("Planning the steps…").
     Progress { text: String },
     /// A question card: waits for `agent_answer` with `{ "text": ... }`.
@@ -425,11 +425,9 @@ pub fn run_agent<'a>(
             let reply = if ctx.stream && ctx.depth == 0 {
                 let app = ctx.app.clone();
                 let mut on_delta = move |text: &str| emit(&app, AgentEvent::Delta { text: text.to_string() });
-                let reply = post_chat_stream(&ctx.api_key, &body, &mut on_delta).await?;
-                if reply.tool_calls.is_some() {
-                    emit(&ctx.app, AgentEvent::DeltaReset);
-                }
-                reply
+                // Text written before a tool call is kept: it is Leo telling the
+                // user what it is about to do, and stays as a message of its own.
+                post_chat_stream(&ctx.api_key, &body, &mut on_delta).await?
             } else {
                 post_chat(&ctx.api_key, &body).await?
             };
@@ -671,8 +669,51 @@ pub async fn agent_run(
     planner_model: Option<String>,
     verifier_model: Option<String>,
     text: String,
+    images: Option<Vec<String>>,
 ) -> Result<String, String> {
-    run_request(app, state.inner(), api_key, model, planner_model, verifier_model, text).await
+    run_request(app, state.inner(), api_key, model, planner_model, verifier_model, text, images).await
+}
+
+const MAX_IMAGES: usize = 6;
+const MAX_IMAGE_CHARS: usize = 8_000_000;
+/// Images older than the newest few are dropped from the conversation the
+/// model is sent each turn, so a long chat does not carry every picture along.
+const KEEP_IMAGE_MESSAGES: usize = 2;
+
+/// Keeps only well-formed image data URLs, within the size limits.
+fn clean_images(images: Option<Vec<String>>) -> Result<Vec<String>, String> {
+    let images = images.unwrap_or_default();
+    if images.len() > MAX_IMAGES {
+        return Err(format!("You can attach up to {MAX_IMAGES} images at a time."));
+    }
+    for url in &images {
+        if !url.starts_with("data:image/") || !url.contains(";base64,") {
+            return Err("One of the attachments is not a valid image.".to_string());
+        }
+        if url.len() > MAX_IMAGE_CHARS {
+            return Err("One of the images is too large to send.".to_string());
+        }
+    }
+    Ok(images)
+}
+
+/// Removes the images from all but the newest `keep` messages that have any.
+fn drop_old_images(history: &mut [ChatMessage], keep: usize) {
+    let mut seen = 0;
+    for message in history.iter_mut().rev() {
+        if message.images.is_empty() {
+            continue;
+        }
+        seen += 1;
+        if seen > keep {
+            message.images.clear();
+            let note = "(an image was attached here earlier)";
+            message.content = Some(match message.content.take() {
+                Some(text) if !text.is_empty() => format!("{text}\n{note}"),
+                _ => note.to_string(),
+            });
+        }
+    }
 }
 
 /// Handles one user message from start to finish (see the module docs).
@@ -684,7 +725,11 @@ pub async fn run_request(
     planner_model: Option<String>,
     verifier_model: Option<String>,
     text: String,
+    images: Option<Vec<String>>,
 ) -> Result<String, String> {
+    let images = clean_images(images)?;
+    // An image sent without words still needs something readable in the chat's record.
+    let text = if text.trim().is_empty() && !images.is_empty() { "(sent an image)".to_string() } else { text };
     let main = model.trim().to_string();
     let api_key_for_summary = api_key.clone();
     if main.is_empty() {
@@ -697,7 +742,10 @@ pub async fn run_request(
     };
 
     let my_turn = state.turn.fetch_add(1, Ordering::SeqCst) + 1;
-    let user_text = text.clone();
+    let user_text = match images.len() {
+        0 => text.clone(),
+        n => format!("{text}\n\n(attached {n} image{})", if n == 1 { "" } else { "s" }),
+    };
     // The agents should know the saved profile even before the screen asks.
     crate::profile::ensure_loaded(&app);
     let (chat, new_chat) = ensure_chat(&app, state, &text);
@@ -742,7 +790,8 @@ pub async fn run_request(
     drop(state.folding.lock().await);
 
     let mut messages = state.history.lock().unwrap().clone();
-    messages.push(ChatMessage::text("user", text.clone()));
+    messages.push(ChatMessage { images, ..ChatMessage::text("user", text.clone()) });
+    drop_old_images(&mut messages, KEEP_IMAGE_MESSAGES);
     // What the agents read: the summary of older turns, then the recent messages.
     let prompt = crate::summary::with_summary(&state.summary.lock().unwrap().clone(), &messages);
 

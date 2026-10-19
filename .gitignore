@@ -34,3 +34,6 @@ dist-ssr
 src-tauri/resources/uv.exe
 src-tauri/resources/uvx.exe
 src-tauri/resources/uvw.exe
+
+# Copied from node_modules by scripts/copy-voice-assets.mjs
+public/vad/

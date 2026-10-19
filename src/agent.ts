@@ -17,7 +17,7 @@ export type AgentEvent =
   | { kind: "tool_result"; id: string; name: string; ok: boolean; error?: string | null }
   | { kind: "progress"; text: string }
   | { kind: "delta"; text: string }
-  | { kind: "delta_reset" }
+  | { kind: "say"; text: string }
   | { kind: "ask_user"; id: string; question: string; options: AskOption[] }
   | { kind: "approval_request"; id: string; name: string; label: string; args: Record<string, unknown> };
 
@@ -51,7 +51,7 @@ export class AgentClient {
     void invoke("agent_cancel");
   }
 
-  async ask(text: string): Promise<string> {
+  async ask(text: string, images: string[] = []): Promise<string> {
     const apiKey = this.getApiKey();
     if (!apiKey) throw new Error("Add your OpenRouter API key in settings first.");
     const model = this.getModel().trim();
@@ -63,6 +63,7 @@ export class AgentClient {
       plannerModel: this.getPlannerModel().trim() || null,
       verifierModel: this.getVerifierModel().trim() || null,
       text,
+      images: images.length ? images : null,
     });
   }
 }

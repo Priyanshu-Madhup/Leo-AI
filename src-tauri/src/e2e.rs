@@ -112,6 +112,7 @@ async fn timing_run(handle: AppHandle) -> bool {
         None,
         None,
         request,
+        None,
     )
     .await;
     println!("\n==== finished in {:.1}s ====", started.elapsed().as_secs_f32());

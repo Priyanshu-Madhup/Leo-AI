@@ -10,6 +10,8 @@ import { greeting } from "./greeting";
 import { BUG_FIXES_LINE, RELEASES, releasesSince, type Release } from "./changelog";
 import { createStreamTyper, typewrite, type StreamTyper, type Typer } from "./typewriter";
 import { playWarp, type SpaceRun } from "./space";
+import { VoiceControl } from "./voiceControl";
+import { AttachmentTray, isImageFile, renderBubbleImages } from "./attachments";
 
 const STORAGE_KEY = "leo.openrouter.apiKey";
 const STORAGE_MODEL = "leo.openrouter.model";
@@ -43,6 +45,9 @@ const messagesEl = document.querySelector<HTMLDivElement>("#messages")!;
 const composer = document.querySelector<HTMLFormElement>("#composer")!;
 const composerInput = document.querySelector<HTMLTextAreaElement>("#composer-input")!;
 const sendBtn = document.querySelector<HTMLButtonElement>("#send-btn")!;
+const attachBtn = document.querySelector<HTMLButtonElement>("#attach-btn")!;
+const attachInput = document.querySelector<HTMLInputElement>("#attach-input")!;
+const attachTray = document.querySelector<HTMLDivElement>("#attachments")!;
 
 const settingsModal = document.querySelector<HTMLDivElement>("#settings")!;
 const settingsClose = document.querySelector<HTMLButtonElement>("#settings-close")!;
@@ -85,6 +90,31 @@ function getVerifierModel(): string {
 }
 
 const llm = new AgentClient(getApiKey, getModel, getPlannerModel, getVerifierModel);
+
+// Voice is an input/output layer around the same text path: spoken turns go
+// through sendMessage() like typed ones, and Leo's streamed reply is spoken as
+// it arrives. Cancelling here is the single place that stops a reply.
+let deltasOpen = true;
+// True from the moment a message is sent until its reply has arrived.
+let turnBusy = false;
+const voice = new VoiceControl({
+  submit: (text) => sendMessage(text),
+  cancelResponse: () => {
+    // A question or approval card means Leo is waiting for an answer, not generating.
+    if (pendingCard) return;
+    deltasOpen = false; // late pieces of the old reply are ignored
+    turnBusy = false;
+    llm.cancel();
+    turnGen++;
+    finishLive();
+    orb.setLevel(0);
+    hideTyping();
+    setState("idle");
+  },
+  setOrbState: (state) => setState(state),
+  setOrbLevel: (level) => orb.setLevel(level),
+  showError: (message) => addMessage("error", message),
+});
 
 // Memory and web search live in the Rust backend, which only offers those
 // tools to the model once it has a key. At startup an empty stored key is
@@ -408,7 +438,7 @@ function addLiveText(text: string) {
     setState("speaking");
     liveTyper = createStreamTyper(liveEl, () => {
       followEnd();
-      orb.setLevel(0.22 + 0.14 * Math.sin(performance.now() / 85));
+      if (!voice.ownsOrb) orb.setLevel(0.22 + 0.14 * Math.sin(performance.now() / 85));
     });
   }
   liveTyper?.push(text);
@@ -441,7 +471,7 @@ function addMessage(
   role: "user" | "assistant" | "error",
   text: string,
   typing?: { onTick?: () => void; onDone?: () => void; instant?: boolean },
-) {
+): HTMLDivElement {
   // A new message completes whatever was still being typed.
   currentTyper?.finish();
   currentTyper = null;
@@ -467,6 +497,7 @@ function addMessage(
       },
     );
   }
+  return el;
 }
 
 // ---------- question and approval cards ----------
@@ -591,6 +622,7 @@ function showAskCard(event: Extract<AgentEvent, { kind: "ask_user" }>) {
     finishCard(card, { text }, `You answered: ${text}`),
   );
 
+  voice.runtime.say(event.question);
   showCard(card);
 }
 
@@ -642,6 +674,10 @@ function showApprovalCard(event: Extract<AgentEvent, { kind: "approval_request" 
     isRefusal(note) ? finishCard(card, { allow: false }, "Declined") : finishCard(card, { allow: false, note }, `Declined: ${note}`),
   );
 
+  // With voice on, the question is read out; for an email, who it goes to and what it is about.
+  const to = typeof args.to === "string" ? args.to : "";
+  const subject = typeof args.subject === "string" ? args.subject : "";
+  voice.runtime.say(isEmail && to ? `${title} To ${to}${subject ? `, subject: ${subject}` : ""}.` : title);
   showCard(card);
   // Focus the confirm button so Enter or Space is enough to say yes.
   allow.focus({ preventScroll: true });
@@ -761,15 +797,23 @@ void onAgentEvent(async (event) => {
   // run only. The chat shows tool rows, never the plan.
   if (event.kind === "progress") return;
   if (event.kind === "delta") {
+    if (!deltasOpen) return;
     addLiveText(event.text);
+    voice.runtime.feedLeoText(event.text);
     return;
   }
-  if (event.kind === "delta_reset") {
-    // The text so far was only a lead-in to a tool call.
-    dropLive();
-    orb.setLevel(0);
-    setState("thinking");
-    showTyping();
+  if (event.kind === "say") {
+    // A line Leo says before a step of a plan; it stays as a message of its own.
+    if (!deltasOpen) return;
+    addMessage("assistant", event.text, {
+      onTick: () => {
+        if (!voice.ownsOrb) orb.setLevel(0.22 + 0.14 * Math.sin(performance.now() / 85));
+      },
+      onDone: resumeWorking,
+    });
+    voice.runtime.feedLeoText(`${event.text}
+`);
+    voice.runtime.flushLeoText();
     return;
   }
   if (event.kind === "ask_user") {
@@ -782,6 +826,13 @@ void onAgentEvent(async (event) => {
   }
 
   if (event.kind === "tool_start") {
+    // Whatever Leo said before this call ("Let me look that up") stays as a
+    // message above the tool row; the next piece of text starts a new one.
+    if (liveEl) {
+      finishLive();
+      voice.runtime.flushLeoText();
+      resumeWorking();
+    }
     const state: ToolRowState = {};
     toolRows.set(event.id, state);
 
@@ -814,6 +865,16 @@ messagesEl.addEventListener("click", (event) => {
   void openUrl(link.href);
 });
 
+/** Leo said something and is still working: back to the thinking look until the next thing arrives. */
+function resumeWorking() {
+  if (!turnBusy || pendingCard) return;
+  if (!voice.ownsOrb) {
+    orb.setLevel(0);
+    setState("thinking");
+  }
+  showTyping();
+}
+
 function showTyping() {
   typingEl.classList.remove("hidden");
   scrollToEnd();
@@ -827,6 +888,7 @@ function clearChat() {
   currentTyper?.finish();
   currentTyper = null;
   dropLive();
+  voice.runtime.stopSpeaking();
   messagesEl.querySelectorAll(".msg, .tool-step, .card").forEach((el) => el.remove());
   pendingCard = null;
   toolRows.clear();
@@ -1348,25 +1410,32 @@ closeBtn.addEventListener("click", () => {
 // Bumped on every send; a reply from an older send is ignored.
 let turnGen = 0;
 
-async function sendMessage(text: string) {
+async function sendMessage(text: string, images: string[] = []) {
   // A waiting question or approval card takes the text as its answer.
   if (pendingCard) {
-    answerPendingCard(text);
+    if (text) answerPendingCard(text);
     return;
   }
 
   // A new message takes over from whatever was still running.
   llm.cancel();
   const myTurn = ++turnGen;
+  deltasOpen = true;
+  turnBusy = true;
+  voice.runtime.beginResponse(); // drops anything still being said
   orb.setLevel(0);
   finishLive();
 
-  addMessage("user", text);
+  const sent = addMessage("user", text);
+  renderBubbleImages(sent, images);
+  scrollToEnd();
   showTyping();
   setState("thinking");
   try {
-    const reply = await llm.ask(text);
+    const reply = await llm.ask(text, images);
     if (myTurn !== turnGen) return;
+    turnBusy = false;
+    voice.runtime.endLeoText(reply);
     if (liveTyper) {
       // The reply has been typing as it arrived; let the typer work off what is
       // queued, show the final text, then settle the orb.
@@ -1375,6 +1444,7 @@ async function sendMessage(text: string) {
       liveTyper = null;
       typer.end(reply, () => {
         scrollToEnd();
+        if (voice.ownsOrb) return; // the voice is still talking: it owns the orb
         orb.setLevel(0);
         if (currentState === "speaking") setState("idle");
       });
@@ -1384,8 +1454,11 @@ async function sendMessage(text: string) {
     // when it is done.
     setState("speaking");
     addMessage("assistant", reply, {
-      onTick: () => orb.setLevel(0.22 + 0.14 * Math.sin(performance.now() / 85)),
+      onTick: () => {
+        if (!voice.ownsOrb) orb.setLevel(0.22 + 0.14 * Math.sin(performance.now() / 85));
+      },
       onDone: () => {
+        if (voice.ownsOrb) return;
         orb.setLevel(0);
         if (currentState === "speaking") setState("idle");
       },
@@ -1393,10 +1466,16 @@ async function sendMessage(text: string) {
   } catch (err) {
     // "cancelled" means a newer message took over; it owns the UI now.
     if (myTurn !== turnGen || errorMessage(err) === "cancelled") return;
+    turnBusy = false;
     dropLive();
     orb.setLevel(0);
     console.error(err);
-    addMessage("error", errorMessage(err));
+    voice.runtime.failResponse();
+    let message = errorMessage(err);
+    if (images.length && /image|vision|multimodal|modalit/i.test(message)) {
+      message += " (Pick a model that can read images in settings.)";
+    }
+    addMessage("error", message);
     setState("idle");
   }
 }
@@ -1404,8 +1483,47 @@ async function sendMessage(text: string) {
 function autoGrowInput() {
   composerInput.style.height = "auto";
   composerInput.style.height = `${Math.min(composerInput.scrollHeight, 120)}px`;
-  sendBtn.disabled = composerInput.value.trim() === "";
+  sendBtn.disabled = composerInput.value.trim() === "" && attachments.count === 0;
 }
+
+// ---------- attached images ----------
+const attachments = new AttachmentTray(attachTray, autoGrowInput, (message) => showCaption(message, 4000));
+
+attachBtn.addEventListener("click", () => attachInput.click());
+attachInput.addEventListener("change", () => {
+  void attachments.add(Array.from(attachInput.files ?? []));
+  attachInput.value = "";
+});
+// Pasting a picture (a screenshot, a copied image) attaches it; pasted text is untouched.
+composerInput.addEventListener("paste", (event) => {
+  const files = Array.from(event.clipboardData?.files ?? []).filter(isImageFile);
+  if (files.length === 0) return;
+  event.preventDefault();
+  void attachments.add(files);
+});
+// Dropping files anywhere on the window attaches the images among them.
+let dragDepth = 0;
+const hasFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+window.addEventListener("dragenter", (event) => {
+  if (!hasFiles(event)) return;
+  dragDepth++;
+  document.body.classList.add("dragging");
+});
+window.addEventListener("dragleave", (event) => {
+  if (!hasFiles(event)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) document.body.classList.remove("dragging");
+});
+window.addEventListener("dragover", (event) => {
+  if (hasFiles(event)) event.preventDefault();
+});
+window.addEventListener("drop", (event) => {
+  if (!hasFiles(event)) return;
+  event.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("dragging");
+  void attachments.add(Array.from(event.dataTransfer?.files ?? []));
+});
 
 composerInput.addEventListener("input", autoGrowInput);
 composerInput.addEventListener("keydown", (e) => {
@@ -1418,14 +1536,20 @@ composerInput.addEventListener("keydown", (e) => {
 composer.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = composerInput.value.trim();
-  if (!text) return;
+  const images = attachments.dataUrls();
+  if (!text && images.length === 0) return;
+  if (attachments.busy) {
+    showCaption("Still preparing your images…", 2000);
+    return;
+  }
   if (!pendingCard && (!getApiKey() || !getModel())) {
     openSettings("Add your OpenRouter key and a model name to start chatting.");
     return;
   }
   composerInput.value = "";
+  attachments.clear();
   autoGrowInput();
-  void sendMessage(text);
+  void sendMessage(text, images);
 });
 
 // ---------- dragging the minimised orb ----------

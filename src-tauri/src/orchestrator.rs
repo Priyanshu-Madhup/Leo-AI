@@ -31,8 +31,14 @@ A question that one search can settle is utility. Broad, vague or news-style res
 
 pub async fn route(ctx: &Ctx, messages: &[ChatMessage]) -> Result<Route, String> {
     ctx.check()?;
-    ctx.progress("Deciding how to help…");
     let google = ctx.app.state::<McpManager>().is_ready("google");
+
+    // A message with images goes straight to an agent that reads the whole
+    // conversation, so it can see them: a plan would pass its steps text only.
+    if messages.last().is_some_and(|m| !m.images.is_empty()) {
+        return Ok(if google { Route::Google } else { Route::Utility });
+    }
+    ctx.progress("Deciding how to help…");
 
     let mut system = ROUTER_PROMPT.to_string();
     if !google {

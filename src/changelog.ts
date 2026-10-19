@@ -10,6 +10,14 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.8.0",
+    features: [
+      "Talk to Leo: tap the microphone, speak, and Leo answers out loud. Speak over Leo to interrupt it at any time",
+      "Attach images to a message with the paperclip, by pasting, or by dropping them onto the chat, in almost any format",
+      "Leo now says what it is about to do while it works, such as \"Sure, let me look that up\", before each step",
+    ],
+  },
+  {
     version: "3.7.0",
     features: [
       "Weather now appears as a card with an icon, and the week's forecast opens from a button",

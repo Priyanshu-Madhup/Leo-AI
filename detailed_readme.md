@@ -1,6 +1,6 @@
 # Leo — detailed project guide
 
-This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.6.0.**
+This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.8.0.**
 
 > Project root: `P:\Leo\siri-orb` (the app; it is the root of the GitHub repo `Priyanshu-Madhup/Leo-AI`). `README.md` is the short user-facing page (install, release steps). One level up, `P:\Leo\Leo_ Functionalities.excalidraw` is the original feature diagram.
 
@@ -229,7 +229,7 @@ Tagged by `kind` (snake_case):
 - `tool_result { id, name, ok, error? }`
 - `ask_user { id, question, options: [{label, description?}] }`
 - `approval_request { id, name, label, args }`
-- `delta { text }`, `delta_reset`, `progress { text }` (streamed reply text and status line)
+- `delta { text }`, `say { text }`, `progress { text }` (streamed reply text; a line Leo says before a plan step; status line)
 
 Other events: `screen://prepare` / `screen://done` (screenshot shrink and reopen), `history://titled { id, title }` (a chat got its name), `shortcut://pressed`, `app://updating`, `app://update-failed`.
 
@@ -392,7 +392,7 @@ The Rust side decides the keys (`Brand { keys[], icon }` in `tools::present`); t
 
 ## 15. Security checklist
 
-- Voice (microphone, wake word, transcription, speech output) was **removed entirely** from the codebase; do not reintroduce it without being asked.
+- Voice (microphone, wake word, transcription, speech output) was removed in an earlier version and **re-added on request in section 26** as a separate layer around the text path. No wake word. Audio is processed on the device only (section 26); keep it that way unless asked.
 - Never put API keys in source or commit them. Keys live in local storage / `mcp.json` only. If a key has been pasted anywhere, **rotate it**.
 - `mcp.json` holds the Google OAuth client secret — keep it private.
 - Do not widen auto-approval: MCP write tools and tainted side effects must keep asking.
@@ -434,7 +434,7 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 ## 17. Additions since 2.1.0 (summary)
 
 - **Global shortcut** (Settings → Shortcut): `set_shortcut` registers one system-wide key combination (stored as `leo.shortcut`). Pressing it shows Leo and toggles between the orb widget and the full chat (event `shortcut://pressed`).
-- **Streaming**: `openrouter::post_chat_stream` reads the SSE stream; for `utility`/`google` routes `run_agent` emits `delta` events (and `delta_reset` if the model then calls a tool) and the frontend draws the reply live. Plan jobs are not streamed.
+- **Streaming**: `openrouter::post_chat_stream` reads the SSE stream; for `utility`/`google` routes `run_agent` emits `delta` events and the frontend draws the reply live. Plan jobs are not streamed.
 - **Prompt caching**: `openrouter::cache_system_prompt` marks system prompts `cache_control: ephemeral` (Qwen needs this). `LEO_TRACE=1` prints cached tokens.
 - **Chat summary** (`summary.rs`): from 10 messages on, older turns are folded into a rolling summary (≤1000 words); the model sees summary + last exchange + new message. Cleared by New chat.
 - **Steps summary** (per request, `Ctx.steps_summary`): the tool calls already made, handed to each plan step so work is not repeated. Separate from the chat summary. Today's date is in every agent's prompt.
@@ -511,6 +511,8 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 
 ## 25. Version history (high level)
 
+- **3.8.0**: voice (section 26), Leo narrates what it is doing (27), image attachments (28).
+- **3.7.0**: weather card, rounded widgets with icons, interactive graphs.
 - **3.6.0**: minimise 25% shorter (still the exact reverse of open); a "no" is remembered for the request and failing tools are not retried endlessly; lists and notes are saved through Sheets/Docs.
 - **3.5.0**: smaller orb widget window (120×120), no text in the widget, ripple rings while working, minimise as the exact reverse of open.
 - **3.4.0**: profile (name, birthday, location, occupation, interests) in a second Settings tab, a one-time prompt for existing users, personal time-aware greetings, the profile used in the agents' prompts.
@@ -525,3 +527,49 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 - The widget window is **120×120** (it was 160×150): the orb canvas is 110 px (unchanged) plus a 5 px margin, so far less of the screen is covered by an invisible square. `WIDGET_SIZE` and `ORB_CENTER_IN_WIDGET` (60, 60) in `lib.rs`, the `#flash` position and the 5 px `#orb-wrap` margin in `styles.css`, and `minWidth`/`minHeight` (100) in `tauri.conf.json` must agree (the old 160×150 minimum would have stopped the window from shrinking).
 - A saved orb spot from the old window is moved once (`"v": 2` in `widget-position.json`) by the difference between the old and new orb centres, so the orb stays exactly where it was on screen.
 - **No text in the orb widget**: tool captions ("Saving to memory"...) are not shown; the orb's own animation says Leo is working. Instead, while Leo is thinking or writing, soft **ripple rings** leave the orb (`orb-ring`, two rings, 2.4 s thinking / 1.8 s speaking). They stay inside the orb's 110 px square so the window never clips them; they are off during the minimise/open sequences and with reduced motion.
+
+## 26. Voice (talk to Leo) — `src/voice/`, `src/voiceControl.ts`
+
+Voice is an **input/output layer around the existing text path**. There is one brain and one conversation: a spoken turn goes through `sendMessage()` exactly like a typed one, and Leo's streamed reply is spoken as it arrives. Rust, the agents and the chat history are untouched. Turn it on with the mic button in the composer (a mute button appears next to it).
+
+**Pipeline:** microphone (opened once, kept open) → Silero VAD → Whisper (partials while speaking, final at the end) → `TurnManager` (end-of-turn) → `sendMessage` → Leo's `delta` events → `SentenceChunker` → `speechTextNormalizer` (no markdown, code skipped) → Kokoro TTS → `AudioPlayer` (gapless, epoch-based) → speaker. The same `delta` stream still feeds the typed chat text.
+
+| File | Job |
+|---|---|
+| `voice/runtime.ts` | `VoiceRuntime`: the voice session, no DOM. Owns the state machine, barge-in, turn handling, the reply-to-speech pipeline, metrics. Talks to Leo only through `submit(text)` and `cancelResponse()`. Events: `phase`, `speechStart`, `partialTranscript`, `finalTranscript`, `leoText`, `bargeIn`, `audioStart`, `audioEnd`, `progress`, `error`. |
+| `voice/stateMachine.ts` | `VoiceState`: idle, loading, listening, user_speaking, thinking, speaking, interrupted, error; refuses impossible moves. |
+| `voice/audioPlayer.ts` | One persistent speaker path. Chunks scheduled back to back (`nextAt`); every chunk has an **epoch**, `flush(epoch)` stops everything and rejects older audio. Output goes AudioContext → MediaStreamDestination → hidden `<audio>` so the browser's echo canceller can see it. `level()`/`bands()` read the real output (the orb follows it). |
+| `voice/vad.ts` | Silero v5 through `@ricky0123/vad-web`. Mic requested with echo cancellation, noise suppression, auto gain; reconnects if the mic vanishes. Model/worklet from `public/vad/` (copied by `scripts/copy-voice-assets.mjs` before dev and build; git-ignored); the ONNX runtime is a bundled `?url` asset. |
+| `voice/stt.ts`, `stt.worker.ts` | Whisper (`onnx-community/whisper-base.en`) in a worker, WebGPU with wasm fallback. One request at a time; a newer partial replaces a waiting one; finals go first. Partials are throttled so previews never keep the worker busy. |
+| `voice/tts.ts`, `tts.worker.ts` | Kokoro (`Kokoro-82M-v1.0-ONNX`, voice `af_heart`, key `leo.voice.name`) in a worker, WebGPU fp32 with wasm q8 fallback. Yields PCM per piece; `cancel()` ends running work. **kokoro-js only ends a stream when its splitter is closed** (`closedText()` does this); passing a plain string hangs. |
+| `voice/sentenceChunker.ts` | Streaming sentences: no abbreviation/decimal/list-number splits, fenced code dropped, long run-ons split at a comma, the **first chunk may end at a comma** (about 22 characters) so speech starts sooner. |
+| `voice/speechText.ts` | Markdown to speakable text ("1." becomes "First,"). The chat keeps the original. |
+| `voice/turnManager.ts` | `TurnManager` interface + heuristic: noise words/blank markers are not submitted; waits longer after a comma or dangling word ("and", "the", "um"). Replaceable by a learned model (Smart-Turn) without touching the runtime. |
+| `voice/bargeIn.ts` | `BargeInDetector`: needs confident speech (0.7, +0.12 while Leo is loud) for about 260 ms. Constants are starting points to tune on real hardware. |
+| `voice/metrics.ts` | Per-turn T1 to T6 timings; in dev `window.__leoVoice.metrics.history` and a console line per turn. |
+| `voiceControl.ts` | The DOM side: mic/mute buttons, `#voice-line` (listening, partial text, loading percent), orb state and level. `main.ts` has small hooks: `voice.runtime.beginResponse/feedLeoText/resetLeoText/endLeoText/failResponse` in `sendMessage` and the `delta` handler, `say()` for question/approval cards, `stopSpeaking()` in `clearChat`, `deltasOpen` so late text of a cancelled reply is ignored. |
+
+**Barge-in:** while Leo is speaking or thinking, sustained user speech calls `interrupt()`: new epoch, player flushed, queued speech and synthesis dropped, `cancelResponse()` (which is `llm.cancel()` plus UI cleanup, skipped while a question card is waiting), then the speech is captured and sent as the next turn of the same chat. Sound that is not confirmed speech (echo, clicks) is discarded without effect.
+
+**Tests:** `npm test` (vitest, `src/voice/__tests__`): chunker, normalizer, audio player (fake AudioContext), state machine, turn manager, barge-in detector, and the runtime end to end with fake engines (barge-in, no old audio afterwards, joined turns, error handling). `npm run build` also bundles the workers (`worker.format: "es"` in `vite.config.ts`).
+
+**Measured on this PC (Intel Gen12 iGPU, 16 threads), real engines through a synthetic microphone:** the whole scenario works (speech detected, transcribed correctly, Leo cancelled and the interruption answered; flush 250 ms after speech began). But Kokoro needs about 4.5 s per sentence on WebGPU fp32 (RTF about 0.9; q4f16 the same; wasm q8 RTF 11), Whisper base.en 2.6–2.9 s for a 4 s clip (tiny.en 1.6–1.8 s), so first audio comes roughly 8–12 s after the user stops. This is the hardware ceiling, not the pipeline; a machine with a discrete GPU should be several times faster. The user chose to keep Kokoro. Options if it must be faster: `whisper-tiny.en` (one line in `stt.worker.ts`), a built-in Windows voice behind the same `TTS` interface (not built), a cloud voice (not built). First use downloads about 400 MB of models (cached afterwards); warm-up takes 20–35 s.
+
+**Not verified:** the microphone in the Tauri window (WebView2 permission prompt), and echo cancellation with a real speaker and microphone (the test used a virtual microphone, so Leo's own voice was never in the input). Test both on the real app before relying on barge-in with speakers. **Not built:** Smart-Turn model, voiceprint/addressee logic, voice settings UI (voice name is a local-storage key), push-to-talk, a What's-new entry (no release was made).
+
+**Dev note:** `node_modules` here is a junction to `C:\Users\Priyanshu Madhup\.node-modules\siri-orb` because the P: drive ran out of space installing the ONNX packages (the same trick as the Rust build cache).
+
+## 27. Leo talks while it works (narration)
+
+- **Direct runs** (utility/google routes): the `NARRATE` prompt (`agents.rs`, only for the Utility and Google agents) tells Leo to write one short sentence before a tool that takes a moment ("Sure, let me look up Elon Musk online.") and a brief word between steps. That text is **kept** (it used to be dropped by a `delta_reset` event, which no longer exists): the frontend finishes the bubble when the tool row appears (`tool_start`), shows the thinking dots again (`resumeWorking`), and the next text starts a new bubble. Quick lookups (date, location, memory) are not narrated; the final answer must not repeat the lines.
+- **Plans**: each planned step has a `say` field (written by the planner and the plan reviser: one short friendly sentence, no tool names). `planner::run_job` emits it as the `say` event just before the step runs (not on retries); the frontend shows it as its own message. Plan steps themselves are not streamed.
+- **Voice**: both kinds are spoken. `VoiceRuntime.flushLeoText()` speaks the text so far when a tool starts (a sentence end needs one more character to be recognised, so it would otherwise wait).
+- The conversation history still stores only the user's messages and Leo's final replies; the narration lines are not saved with the chat.
+
+## 28. Attaching images
+
+- **UI**: a paperclip in the composer, pasting a picture into the box, or dropping files anywhere on the window (`dragDropEnabled: false` in `tauri.conf.json` so the page receives the drop). Up to 6 images; thumbnails with a remove button sit above the box; a message may be images only. `src/attachments.ts` (`AttachmentTray`, `prepareImage`).
+- **Any format**: each file is decoded by the window's engine (`createImageBitmap`, or an `<img>` for SVG), scaled to at most 2048 px on the long side and re-encoded as JPEG (white behind transparency), so the model always gets a format it accepts. PNG, JPEG, GIF (first frame), WebP, AVIF, BMP, SVG and ICO work. **HEIC/HEIF and TIFF usually cannot be decoded by WebView2** and show "Couldn't read ... Try saving it as PNG or JPEG".
+- **Backend**: `agent_run` takes `images: Option<Vec<String>>` (data URLs; at most 6, 8 MB each, validated in `clean_images`). `ChatMessage.images` is skipped by serde and `ChatMessage` serialises such a message as OpenAI multimodal content (text part + `image_url` parts), so every agent loop sends them unchanged. A message with images skips the router and goes straight to the Google agent (or the utility agent if Google is not connected), because plan steps pass text only.
+- **Memory of images**: only the newest 2 messages with images keep them in the conversation sent to the model (`drop_old_images`); older ones are replaced by a note. Images are never saved: the chat history stores the text plus "(attached N images)", so a reopened chat shows no pictures.
+- The main model must accept images (same requirement as `look_at_screen`); otherwise the error gets a hint to pick another model.

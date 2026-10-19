@@ -8,6 +8,10 @@ export default defineConfig(() => ({
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
+  // The voice workers (speech recognition and synthesis) load their ONNX
+  // runtime relative to import.meta.url, which needs module workers.
+  worker: { format: "es" as const },
+
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
