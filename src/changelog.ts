@@ -10,6 +10,13 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.8.2",
+    features: [
+      "A new Permissions setting lets Leo add and change your calendar events without asking each time (you can also just tell Leo). It still asks before deleting an event or inviting other people",
+      "Leo's voice no longer reads out emoji, icon names or symbols",
+    ],
+  },
+  {
     version: "3.8.1",
     features: ["With voice on, Leo now says out loud what it is doing as it works, such as checking the weather or searching the web"],
   },

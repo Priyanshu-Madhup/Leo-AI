@@ -106,8 +106,8 @@ impl AgentId {
     /// Tools this agent uses itself (delegation is separate).
     fn own_tools(self) -> Vec<&'static str> {
         let specific: &[&str] = match self {
-            AgentId::Utility => &["fetch_page", "open_url", "open_app"],
-            AgentId::Google => &[],
+            AgentId::Utility => &["fetch_page", "open_url", "open_app", "set_calendar_auto_approve"],
+            AgentId::Google => &["set_calendar_auto_approve"],
             AgentId::Gmail => &[
                 "google__search_gmail_messages",
                 "google__get_gmail_message_content",

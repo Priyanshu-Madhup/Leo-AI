@@ -5,7 +5,13 @@
 
 const ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"];
 
-const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu;
+// Every pictograph, not a fixed list of ranges: the voice would read each one out by name.
+const EMOJI = /\p{Extended_Pictographic}|\p{Emoji_Presentation}|[\u{FE0E}\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]/gu;
+
+// Icon names from the widget cards (meteocons:rain-fill, lucide:calendar) and
+// :emoji_shortcodes: are for the screen only.
+const ICON_NAME = /\b(?:meteocons|lucide|logos|mdi|ph|tabler|material-symbols|fluent|carbon|solar|heroicons|ri|bi|fa6-solid|fa6-regular|fa6-brands|simple-icons|iconoir|streamline)[:][\w-]+/gi;
+const SHORTCODE = /:[a-z][a-z0-9_+-]*:/gi;
 
 export function speechTextNormalizer(input: string): string {
   const lines = input.replace(/\r/g, "").split("\n");
@@ -14,6 +20,7 @@ export function speechTextNormalizer(input: string): string {
   for (let raw of lines) {
     let line = raw.trim();
     if (!line) continue;
+    if (/^[{[].*[}\]]$/.test(line) && /"\s*:/.test(line)) continue; // a stray JSON line (a card's data)
     if (/^([-*_]\s*){3,}$/.test(line)) continue; // horizontal rule
     if (/^\|?[\s:|-]+\|?$/.test(line) && line.includes("-")) continue; // table divider
 
@@ -50,7 +57,13 @@ export function speechTextNormalizer(input: string): string {
       .replace(/(\*|_)(.*?)\1/g, "$2")
       .replace(/~~(.*?)~~/g, "$1")
       .replace(/[*_`#]/g, "")
+      .replace(ICON_NAME, "")
+      .replace(SHORTCODE, " ")
+      .replace(/\s*°\s*C\b/g, " degrees Celsius")
+      .replace(/\s*°\s*F\b/g, " degrees Fahrenheit")
+      .replace(/°/g, " degrees")
       .replace(EMOJI, "")
+      .replace(/[\p{So}\u{FE0F}]/gu, "") // any other symbol that would be read as its name
       .replace(/\s*→\s*/g, ", ")
       .replace(/\s*&\s*/g, " and ")
       .replace(/\s+/g, " ")

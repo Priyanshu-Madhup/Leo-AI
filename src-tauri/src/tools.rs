@@ -81,6 +81,18 @@ fn base_definitions() -> serde_json::Value {
         {
             "type": "function",
             "function": {
+                "name": "set_calendar_auto_approve",
+                "description": "Turn on or off the approval card Leo shows before creating or changing a calendar event. Call it ONLY when the user asks you to stop asking permission for calendar events (enabled true) or to start asking again (enabled false). The user is asked to confirm once. It never covers deleting events or events that invite other people. Do not use memory for this: remembering a wish does not change what the app does.",
+                "parameters": {
+                    "type": "object",
+                    "properties": { "enabled": { "type": "boolean", "description": "true = create and update the user's own events without asking." } },
+                    "required": ["enabled"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "ask_user",
                 "description": "Ask the user a question in the chat and wait for their answer. Use it when the request is ambiguous, when several options are plausible (for example several contacts with the same name or several matching files), or when you need a detail you cannot look up. Offer 2-6 short options when you can; the user can also type their own answer. Never guess.",
                 "parameters": {
@@ -314,6 +326,14 @@ pub fn present(name: &str, args: &str) -> Presentation {
         "recall_memory" => plain("Checking memory", None, Brand::branded(&["memory"], "memory")),
         "remember" => plain("Saving to memory", None, Brand::branded(&["memory"], "memory")),
         "ask_user" => plain("Asking you", None, Brand::icon("tool")),
+        "set_calendar_auto_approve" => {
+            let on = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(true);
+            plain(
+                if on { "Stop asking before calendar changes" } else { "Ask before calendar changes again" },
+                None,
+                Brand::branded(&["google-calendar", "google"], "tool"),
+            )
+        }
         other => match other.split_once("__") {
             Some((_, tool)) => {
                 let mut p = google_presentation(tool);
@@ -408,6 +428,19 @@ pub async fn execute(app: &AppHandle, name: &str, args: &str) -> Result<String, 
         "look_at_screen" => Err("The screen is read through the agent loop.".to_string()),
         "open_url" => open_url(app, args),
         "open_app" => open_app(app, args),
+        "set_calendar_auto_approve" => {
+            let enabled = serde_json::from_str::<serde_json::Value>(args)
+                .ok()
+                .and_then(|v| v["enabled"].as_bool())
+                .ok_or("Bad arguments: enabled must be true or false")?;
+            crate::prefs::apply_calendar_auto_from_chat(app, enabled);
+            Ok(if enabled {
+                "Done. Calendar events you ask for are now created and changed without an approval card (deleting an event, or one that invites other people, still asks). It can be changed in Settings."
+            } else {
+                "Done. Leo will ask before changing the calendar again."
+            }
+            .to_string())
+        }
         "recall_memory" => {
             let QueryArgs { query } = serde_json::from_str(args).map_err(|e| format!("Bad arguments: {e}"))?;
             app.state::<MemoryState>().recall(&query).await

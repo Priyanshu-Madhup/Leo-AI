@@ -27,6 +27,7 @@ const STORAGE_SHORTCUT = "leo.shortcut";
 const STORAGE_LAST_VERSION = "leo.lastVersion";
 const STORAGE_PROFILE_PROMPTED = "leo.profilePrompted";
 const STORAGE_TRANSPARENCY = "leo.transparency";
+const STORAGE_CALENDAR_AUTO = "leo.autoApproveCalendar";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#orb")!;
 const widget = document.querySelector<HTMLDivElement>("#widget")!;
@@ -61,6 +62,7 @@ const googleEmailInput = document.querySelector<HTMLInputElement>("#google-email
 const shortcutInput = document.querySelector<HTMLInputElement>("#shortcut-input")!;
 const shortcutClear = document.querySelector<HTMLButtonElement>("#shortcut-clear")!;
 const blurToggle = document.querySelector<HTMLInputElement>("#blur-toggle")!;
+const calendarAuto = document.querySelector<HTMLInputElement>("#calendar-auto")!;
 const transparencySlider = document.querySelector<HTMLInputElement>("#transparency")!;
 const transparencyValue = document.querySelector<HTMLSpanElement>("#transparency-value")!;
 const saveBtn = document.querySelector<HTMLButtonElement>("#save-key-btn")!;
@@ -244,6 +246,20 @@ transparencySlider.addEventListener("input", () => {
 
 blurToggle.checked = (localStorage.getItem(STORAGE_BLUR) ?? "1") === "1";
 void invoke("set_blur", { enabled: blurToggle.checked });
+// Calendar events without an approval card: off unless the user chose it. The
+// screen keeps the choice and tells the backend at every start.
+calendarAuto.checked = localStorage.getItem(STORAGE_CALENDAR_AUTO) === "1";
+void invoke("set_calendar_auto_approve", { enabled: calendarAuto.checked });
+calendarAuto.addEventListener("change", () => {
+  localStorage.setItem(STORAGE_CALENDAR_AUTO, calendarAuto.checked ? "1" : "0");
+  void invoke("set_calendar_auto_approve", { enabled: calendarAuto.checked });
+});
+// The user asked Leo in chat (and confirmed on the card): keep the switch in step.
+void listen<boolean>("prefs://calendar", (event) => {
+  calendarAuto.checked = event.payload;
+  localStorage.setItem(STORAGE_CALENDAR_AUTO, event.payload ? "1" : "0");
+});
+
 blurToggle.addEventListener("change", () => {
   localStorage.setItem(STORAGE_BLUR, blurToggle.checked ? "1" : "0");
   void invoke("set_blur", { enabled: blurToggle.checked });

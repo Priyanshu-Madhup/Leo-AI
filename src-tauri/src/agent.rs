@@ -492,7 +492,7 @@ pub fn run_agent<'a>(
 /// title: "Sure, I'm searching the web for latest news." Quick background
 /// lookups, questions and approvals are not announced.
 fn narration_line(name: &str, args: &str, call_id: &str) -> Option<String> {
-    if matches!(name, "current_datetime" | "get_location" | "recall_memory" | "remember" | "ask_user") {
+    if matches!(name, "current_datetime" | "get_location" | "recall_memory" | "remember" | "ask_user" | "set_calendar_auto_approve") {
         return None;
     }
     let p = tools::present(name, args);
@@ -596,8 +596,11 @@ async fn run_tool(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
     // marked read-only, and (once untrusted content has been read) the
     // built-in side-effect tools.
     let needs_approval = (app.state::<crate::mcp::McpManager>().requires_approval(name)
-        || (ctx.tainted() && tools::is_side_effect(name)))
-        && !ctx.doc_already_approved(name, args);
+        || (ctx.tainted() && tools::is_side_effect(name))
+        // Changing a permission always asks, so the model cannot relax its own limits.
+        || name == "set_calendar_auto_approve")
+        && !ctx.doc_already_approved(name, args)
+        && !crate::prefs::calendar_write_skips_approval(app, name, args);
 
     if needs_approval {
         // A "no" is remembered for the rest of the request.

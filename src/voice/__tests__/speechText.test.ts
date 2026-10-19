@@ -20,6 +20,18 @@ describe("speechTextNormalizer", () => {
   it("removes emoji and rules", () => {
     expect(n("Done \u{1F389}\n---\nNext")).toBe("Done Next");
   });
+  it("never reads emoji or symbols out by name", () => {
+    const reply =
+      "All set! \u{1FA92} Your event is on your calendar:\n\u{1F4C5} Today\n⏰ 6:00 PM – 7:00 PM ✂️ Have a great trim! \u{1F44B}\u{1F3FD} ✅ ⭐ \u{1F1EE}\u{1F1F3}";
+    expect(n(reply)).toBe("All set! Your event is on your calendar: Today 6:00 PM – 7:00 PM Have a great trim!");
+  });
+  it("drops icon names and shortcodes", () => {
+    expect(n("Rain today :cloud_with_rain: meteocons:rain-fill and lucide:droplets 72%")).toBe("Rain today and 72%");
+    expect(n('{"title":"Bengaluru","icon":"meteocons:rain-fill","value":"25"}')).toBe("");
+  });
+  it("says degrees", () => {
+    expect(n("It is 25°C, or 77°F.")).toBe("It is 25 degrees Celsius, or 77 degrees Fahrenheit.");
+  });
   it("returns empty for markup with nothing to say", () => {
     expect(n("---\n\n```\n")).toBe("");
   });

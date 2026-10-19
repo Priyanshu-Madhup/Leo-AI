@@ -13,6 +13,7 @@ mod memory;
 mod openrouter;
 mod orchestrator;
 mod planner;
+mod prefs;
 mod profile;
 mod reflection;
 mod session;
@@ -441,11 +442,13 @@ pub fn run() {
         .manage(web::WebState::default())
         .manage(session::SessionInfo::default())
         .manage(history::Db::default())
+        .manage(prefs::Prefs::default())
         .invoke_handler(tauri::generate_handler![
             agent::agent_run,
             agent::agent_cancel,
             vision::screen_prepared,
             history::history_list,
+            prefs::set_calendar_auto_approve,
             profile::profile_get,
             profile::profile_save,
             agent::history_open,
