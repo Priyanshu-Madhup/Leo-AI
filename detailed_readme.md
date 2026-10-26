@@ -1,6 +1,6 @@
 # Leo — detailed project guide
 
-This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.8.2.**
+This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.8.3.**
 
 > Project root: `P:\Leo\siri-orb` (the app; it is the root of the GitHub repo `Priyanshu-Madhup/Leo-AI`). `README.md` is the short user-facing page (install, release steps). One level up, `P:\Leo\Leo_ Functionalities.excalidraw` is the original feature diagram.
 
@@ -511,6 +511,7 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 
 ## 25. Version history (high level)
 
+- **3.8.3**: scroll-down arrow, prompt navigator (section 30), smooth multi-line message bar, orb ripple rings removed.
 - **3.8.2**: calendar approval can be turned off (section 29); the voice no longer reads emoji or icon names.
 - **3.8.1**: guaranteed spoken narration of tool steps (end of section 27).
 - **3.8.0**: voice (section 26), Leo narrates what it is doing (27), image attachments (28).
@@ -528,7 +529,7 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 
 - The widget window is **120×120** (it was 160×150): the orb canvas is 110 px (unchanged) plus a 5 px margin, so far less of the screen is covered by an invisible square. `WIDGET_SIZE` and `ORB_CENTER_IN_WIDGET` (60, 60) in `lib.rs`, the `#flash` position and the 5 px `#orb-wrap` margin in `styles.css`, and `minWidth`/`minHeight` (100) in `tauri.conf.json` must agree (the old 160×150 minimum would have stopped the window from shrinking).
 - A saved orb spot from the old window is moved once (`"v": 2` in `widget-position.json`) by the difference between the old and new orb centres, so the orb stays exactly where it was on screen.
-- **No text in the orb widget**: tool captions ("Saving to memory"...) are not shown; the orb's own animation says Leo is working. Instead, while Leo is thinking or writing, soft **ripple rings** leave the orb (`orb-ring`, two rings, 2.4 s thinking / 1.8 s speaking). They stay inside the orb's 110 px square so the window never clips them; they are off during the minimise/open sequences and with reduced motion.
+- **No text in the orb widget**: tool captions are not shown; the orb's own animation says Leo is working. The CSS ripple rings that used to leave the orb were removed (the orb's own surface ripple in `orb.ts` stays).
 
 ## 26. Voice (talk to Leo) — `src/voice/`, `src/voiceControl.ts`
 
@@ -582,3 +583,8 @@ Voice is an **input/output layer around the existing text path**. There is one b
 
 - **Calendar without asking (`prefs.rs`)**: off by default. Settings has a Permissions switch ("Don't ask before adding or changing my calendar events", stored as `leo.autoApproveCalendar`, sent to Rust at every start with `set_calendar_auto_approve`). The user can also ask Leo in chat: the built-in tool `set_calendar_auto_approve { enabled }` (Utility and Google agents only) **always shows an approval card**, then sets the flag and emits `prefs://calendar` so the switch follows. It covers ONLY `google__manage_event` with action create or update and **no attendees**; deleting an event, rsvp, and any event that invites other people still ask (`is_plain_event_write`, tested). Remembering the wish in memory does not change the app: the tool description tells the model so.
 - **Speech text (`speechText.ts`)**: emoji and symbols are removed by Unicode property (`Extended_Pictographic`, `Emoji_Presentation`, any `\p{So}`), so nothing is read as its name ("alarm clock"); Iconify names (`meteocons:rain-fill`), `:shortcodes:` and stray JSON lines are dropped; degrees are spoken ("25 degrees Celsius").
+
+## 30. Scroll-down arrow and prompt navigator (`main.ts`, `styles.css`)
+
+- **Scroll-down arrow** (`#scroll-down`): a round button at the bottom middle of the chat, just above the composer. It shows when the chat is more than 80 px from the end and scrolls smoothly to the bottom.
+- **Prompt navigator** (`#chat-nav`): from the 3rd user prompt on, a column of short lines on the right edge, one per user prompt. Hovering one shows the prompt text (3 lines max); clicking scrolls to it; the line for the prompt currently in view is highlighted. Rebuilt from the `.msg.user` elements by a MutationObserver, so it follows New chat and reopened chats.

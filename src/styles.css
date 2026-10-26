@@ -280,6 +280,102 @@ body[data-mode="full"] #messages {
   mask-composite: intersect;
 }
 
+/* Scroll-to-latest arrow: sits at the bottom middle, just above the composer. */
+#scroll-down-wrap { position: relative; height: 0; z-index: 3; }
+
+#scroll-down {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  width: 32px;
+  height: 32px;
+  margin-left: -16px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--edge);
+  background: rgba(30, 30, 32, 0.85);
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.18s ease, transform 0.18s ease, background 0.15s ease;
+}
+
+#scroll-down:hover { background: rgba(60, 60, 64, 0.95); }
+#scroll-down.hidden { opacity: 0; transform: translateY(6px); pointer-events: none; }
+
+/* Prompt navigator: one short line per user prompt down the right edge.
+   Hovering a line shows the prompt; clicking it jumps there. */
+#chat-nav {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-height: 46%;
+  width: 10px;
+  display: flex;
+  flex-direction: column;
+  z-index: 3;
+}
+
+#chat-nav.hidden { display: none; }
+
+.nav-tick {
+  position: relative;
+  flex: 0 1 16px;
+  min-height: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.nav-tick::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  width: 10px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.3);
+  transform-origin: right center;
+  transition: background 0.15s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.nav-tick:hover::before { transform: scale(2); }
+
+.nav-tick:hover::before,
+.nav-tick.active::before { background: rgba(255, 255, 255, 0.9); }
+
+.nav-label {
+  position: absolute;
+  right: 30px;
+  top: 50%;
+  transform: translateY(-50%) translateX(4px);
+  width: max-content;
+  max-width: 220px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: rgba(24, 24, 26, 0.95);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.nav-tick:hover .nav-label { opacity: 1; transform: translateY(-50%); }
+
 #empty {
   margin: auto;
   text-align: center;
@@ -729,7 +825,7 @@ body.has-messages #empty { display: none; }
   display: flex;
   align-items: flex-end;
   gap: 4px;
-  margin: 4px 16px 16px;
+  margin: 0 16px 16px;
   padding: 6px 6px 6px 16px;
   border-radius: 26px;
   background: var(--fill);
@@ -737,22 +833,34 @@ body.has-messages #empty { display: none; }
   transition: border-color 0.2s ease;
 }
 
+/* More than one line: the text takes the whole width and the buttons drop to a
+   row underneath (attach on the left, the rest on the right). */
+#composer { flex-wrap: wrap; }
+#composer.multiline #composer-input { order: -1; flex: 0 0 100%; padding-right: 8px; }
+#composer.multiline #attach-btn { margin-right: auto; }
+
 #composer:focus-within { border-color: rgba(var(--tint), 0.55); }
 
-#composer-input {
+#composer-input,
+#composer-ghost {
+  box-sizing: border-box;
   flex: 1;
   min-width: 0;
   resize: none;
   max-height: 120px;
-  padding: 8px 0;
+  padding: 7px 0;
   border: none;
   outline: none;
   background: transparent;
   color: var(--ink);
   font: inherit;
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 20px;
   user-select: text;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  overflow-y: hidden;
+  transition: height 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 #composer-input::placeholder { color: var(--ink-dim); }
@@ -1522,52 +1630,9 @@ body[data-mode="widget"] #profile-prompt { display: none; }
 
 /* ---------- the orb widget ---------- */
 /* The window is just the orb plus a 5px margin, and it shows no text: what Leo
-   is doing is shown by the orb's own animation (and the ripples below). */
+   is doing is shown by the orb's own animation. */
 body[data-mode="widget"] #orb-wrap { margin-top: 5px; }
 body[data-mode="widget"] #caption { display: none; }
-
-/* Ripples: while Leo is working or writing, soft rings leave the orb and fade
-   out. They stay inside the orb's 110px square, so the window never clips them. */
-body[data-mode="widget"] #orb-wrap::before,
-body[data-mode="widget"] #orb-wrap::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: var(--orb-d);
-  height: var(--orb-d);
-  margin: calc(var(--orb-d) / -2) 0 0 calc(var(--orb-d) / -2);
-  box-sizing: border-box;
-  border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.6);
-  opacity: 0;
-  pointer-events: none;
-}
-
-body[data-mode="widget"] #widget[data-state="thinking"] #orb-wrap::before,
-body[data-mode="widget"] #widget[data-state="thinking"] #orb-wrap::after { animation: orb-ring 2.4s ease-out infinite; }
-body[data-mode="widget"] #widget[data-state="speaking"] #orb-wrap::before,
-body[data-mode="widget"] #widget[data-state="speaking"] #orb-wrap::after { animation: orb-ring 1.8s ease-out infinite; }
-body[data-mode="widget"] #widget[data-state] #orb-wrap::after { animation-delay: 0.9s; }
-
-@keyframes orb-ring {
-  0% { transform: scale(0.45); opacity: 0; }
-  18% { opacity: 0.7; }
-  100% { transform: scale(1); opacity: 0; }
-}
-
-/* Not during the minimise / open sequences, and not with reduced motion. */
-body.imploding #orb-wrap::before,
-body.imploding #orb-wrap::after,
-body.unimploding #orb-wrap::before,
-body.unimploding #orb-wrap::after,
-body.sinking #orb-wrap::before,
-body.sinking #orb-wrap::after { animation: none !important; opacity: 0; }
-
-@media (prefers-reduced-motion: reduce) {
-  body[data-mode="widget"] #orb-wrap::before,
-  body[data-mode="widget"] #orb-wrap::after { animation: none !important; opacity: 0; }
-}
 
 /* ---------- minimising: the opening played in reverse, step by step ---------- */
 /* Opening: orb shrinks to a point -> point flares -> window flies to the
@@ -1648,6 +1713,7 @@ body.voice-on #voice-mute-btn { display: grid; }
 #attach-btn {
   width: 34px;
   height: 34px;
+  margin-left: -7px;
   flex-shrink: 0;
   display: grid;
   place-items: center;

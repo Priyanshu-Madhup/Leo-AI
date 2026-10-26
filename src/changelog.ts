@@ -10,6 +10,15 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.8.3",
+    features: [
+      "A down arrow appears above the message bar when you are not at the end of the chat; tap it to jump to the latest message",
+      "Long chats get a column of small lines on the right edge, one per prompt you sent. Hover one to see the prompt, click it to jump there",
+      "The message bar now grows smoothly, and long messages use the full width with the buttons moving to a row underneath",
+      "The orb no longer sends out ripple rings while it works",
+    ],
+  },
+  {
     version: "3.8.2",
     features: [
       "A new Permissions setting lets Leo add and change your calendar events without asking each time (you can also just tell Leo). It still asks before deleting an event or inviting other people",

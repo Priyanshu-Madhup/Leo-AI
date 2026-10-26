@@ -483,6 +483,73 @@ function followEnd() {
   messagesEl.scrollTop = Math.abs(distance) < 1 ? target : messagesEl.scrollTop + distance * 0.25;
 }
 
+// ---------- scroll-down button and prompt navigator ----------
+const scrollDownBtn = document.querySelector<HTMLButtonElement>("#scroll-down")!;
+const chatNav = document.querySelector<HTMLDivElement>("#chat-nav")!;
+const NAV_MIN_PROMPTS = 3; // more than 2 prompts from the user
+let navPrompts: HTMLElement[] = [];
+let navTicks: HTMLButtonElement[] = [];
+
+function updateScrollDown() {
+  const away = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+  scrollDownBtn.classList.toggle("hidden", away < 80);
+}
+
+function updateNavActive() {
+  if (!navTicks.length) return;
+  const line = messagesEl.getBoundingClientRect().top + 130;
+  let active = 0;
+  navPrompts.forEach((el, i) => {
+    if (el.getBoundingClientRect().top <= line) active = i;
+  });
+  navTicks.forEach((t, i) => t.classList.toggle("active", i === active));
+}
+
+function rebuildNav() {
+  const prompts = Array.from(messagesEl.querySelectorAll<HTMLElement>(".msg.user"));
+  if (prompts.length === navPrompts.length && prompts.every((el, i) => el === navPrompts[i])) return;
+  navPrompts = prompts;
+  chatNav.replaceChildren();
+  navTicks = [];
+  chatNav.classList.toggle("hidden", prompts.length < NAV_MIN_PROMPTS);
+  if (prompts.length < NAV_MIN_PROMPTS) return;
+  for (const el of prompts) {
+    const tick = document.createElement("button");
+    tick.type = "button";
+    tick.className = "nav-tick";
+    const label = document.createElement("span");
+    label.className = "nav-label";
+    label.textContent = (el.textContent ?? "").trim() || "(image)";
+    tick.appendChild(label);
+    tick.addEventListener("click", () => {
+      const offset = el.getBoundingClientRect().top - messagesEl.getBoundingClientRect().top;
+      messagesEl.scrollTo({ top: messagesEl.scrollTop + offset - 100, behavior: "smooth" });
+    });
+    chatNav.appendChild(tick);
+    navTicks.push(tick);
+  }
+  updateNavActive();
+}
+
+let chatUiQueued = false;
+function queueChatUi() {
+  if (chatUiQueued) return;
+  chatUiQueued = true;
+  requestAnimationFrame(() => {
+    chatUiQueued = false;
+    rebuildNav();
+    updateScrollDown();
+    updateNavActive();
+  });
+}
+
+scrollDownBtn.addEventListener("click", () => {
+  messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "smooth" });
+});
+messagesEl.addEventListener("scroll", queueChatUi, { passive: true });
+new MutationObserver(queueChatUi).observe(messagesEl, { childList: true, subtree: true, characterData: true });
+window.addEventListener("resize", queueChatUi);
+
 function addMessage(
   role: "user" | "assistant" | "error",
   text: string,
@@ -1500,9 +1567,43 @@ async function sendMessage(text: string, images: string[] = []) {
   }
 }
 
+// A hidden copy of the input measures how tall the text wants to be, so the
+// real input is only touched when its height really changes (it then grows
+// smoothly through the CSS transition, with no measuring flicker).
+const inputGhost = document.createElement("textarea");
+inputGhost.id = "composer-ghost";
+inputGhost.rows = 1;
+inputGhost.tabIndex = -1;
+inputGhost.setAttribute("aria-hidden", "true");
+inputGhost.style.cssText = "position:fixed;left:-9999px;top:0;height:auto;visibility:hidden;pointer-events:none;";
+document.body.appendChild(inputGhost);
+let inputHeight = 0;
+let singleRowWidth = 0; // the input's width while it shares the row with the buttons
+
 function autoGrowInput() {
-  composerInput.style.height = "auto";
-  composerInput.style.height = `${Math.min(composerInput.scrollHeight, 120)}px`;
+  // Hidden (widget mode) has no width to measure at.
+  if (composerInput.offsetWidth > 0) {
+    const multiline = composer.classList.contains("multiline");
+    if (!multiline) singleRowWidth = composerInput.offsetWidth;
+    inputGhost.style.boxSizing = getComputedStyle(composerInput).boxSizing;
+    inputGhost.value = composerInput.value;
+
+    // Text that needs more than one line at the single-row width moves onto
+    // its own full-width row, with the buttons underneath. Deciding from that
+    // fixed width means the layout never flips back and forth while typing.
+    inputGhost.style.width = `${singleRowWidth || composerInput.offsetWidth}px`;
+    const wantsRows = inputGhost.scrollHeight > 34;
+    if (wantsRows !== multiline) composer.classList.toggle("multiline", wantsRows);
+
+    inputGhost.style.width = `${composerInput.offsetWidth}px`;
+    const full = inputGhost.scrollHeight;
+    const wanted = Math.min(full, 120);
+    if (wanted !== inputHeight) {
+      inputHeight = wanted;
+      composerInput.style.height = `${wanted}px`;
+    }
+    composerInput.style.overflowY = full > 120 ? "auto" : "hidden";
+  }
   sendBtn.disabled = composerInput.value.trim() === "" && attachments.count === 0;
 }
 
