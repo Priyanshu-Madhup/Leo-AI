@@ -93,6 +93,30 @@ fn base_definitions() -> serde_json::Value {
         {
             "type": "function",
             "function": {
+                "name": "doc_draft_add",
+                "description": "Write the next part of a NEW Google Doc as Markdown. Call it once per part (about 1,200 words at most each, every part complete, the first starting with a # title); the parts are joined in order. Nothing is created until doc_draft_publish.",
+                "parameters": {
+                    "type": "object",
+                    "properties": { "markdown": { "type": "string", "description": "This part of the document in Markdown: # title, ## headings, lists, tables, **bold**. Blank line before and after each heading, list and table." } },
+                    "required": ["markdown"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "doc_draft_publish",
+                "description": "Create the Google Doc from every part written with doc_draft_add, in one go, with real formatting. Call it once, after the last part. The user is asked to approve.",
+                "parameters": {
+                    "type": "object",
+                    "properties": { "title": { "type": "string", "description": "The document's title (file name)." } },
+                    "required": ["title"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "ask_user",
                 "description": "Ask the user a question in the chat and wait for their answer. Use it when the request is ambiguous, when several options are plausible (for example several contacts with the same name or several matching files), or when you need a detail you cannot look up. Offer 2-6 short options when you can; the user can also type their own answer. Never guess.",
                 "parameters": {
@@ -326,6 +350,7 @@ pub fn present(name: &str, args: &str) -> Presentation {
         "recall_memory" => plain("Checking memory", None, Brand::branded(&["memory"], "memory")),
         "remember" => plain("Saving to memory", None, Brand::branded(&["memory"], "memory")),
         "ask_user" => plain("Asking you", None, Brand::icon("tool")),
+        "doc_draft_add" | "doc_draft_publish" => plain("Writing a document", None, Brand::branded(&["google-docs", "google"], "tool")),
         "set_calendar_auto_approve" => {
             let on = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(true);
             plain(

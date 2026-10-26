@@ -199,6 +199,12 @@ impl Db {
         })
     }
 
+    /// Chats whose title or any message contains `query` (case-insensitive),
+    /// newest first.
+    pub fn search(&self, app: &AppHandle, query: &str) -> Result<Vec<ChatInfo>, String> {
+        self.run(app, |c| search_chats(c, query))
+    }
+
     pub fn load(&self, app: &AppHandle, chat: i64) -> Result<Loaded, String> {
         self.run(app, |c| {
             let (summary, folded): (String, i64) = c.query_row(
@@ -282,6 +288,28 @@ pub async fn name_chat(app: AppHandle, api_key: String, model: String, chat: i64
     }
 }
 
+/// The SQL behind chat search: `%`, `_` and `\` in the query are literal text.
+fn search_chats(c: &Connection, query: &str) -> rusqlite::Result<Vec<ChatInfo>> {
+    let pattern = format!(
+        "%{}%",
+        query.trim().replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    );
+    let mut stmt = c.prepare(
+        "SELECT id, title, updated_at FROM conversations
+         WHERE EXISTS (SELECT 1 FROM messages WHERE conversation_id = conversations.id)
+           AND (title LIKE ?1 ESCAPE '\\'
+                OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.content LIKE ?1 ESCAPE '\\'))
+         ORDER BY updated_at DESC, id DESC LIMIT 200",
+    )?;
+    let rows = stmt.query_map(params![pattern], |r| Ok(ChatInfo { id: r.get(0)?, title: r.get(1)?, updated_at: r.get(2)? }))?;
+    rows.collect()
+}
+
+#[tauri::command]
+pub fn history_search(app: AppHandle, db: tauri::State<'_, Db>, query: String) -> Result<Vec<ChatInfo>, String> {
+    db.search(&app, &query)
+}
+
 #[tauri::command]
 pub fn history_list(app: AppHandle, db: tauri::State<'_, Db>) -> Result<Vec<ChatInfo>, String> {
     db.list(&app)
@@ -349,5 +377,26 @@ mod tests {
         assert_eq!(live[0].content.as_deref(), Some("3"));
         // Starts at a user message even if the fold point is odd.
         assert_eq!(live_history(&stored, 1)[0].role, "user");
+    }
+
+    #[test]
+    fn search_finds_titles_and_messages_and_treats_wildcards_as_text() {
+        let c = memory_db();
+        for (id, title) in [(1, "Trip to Lisbon"), (2, "Resume help"), (3, "100% done")] {
+            c.execute(
+                "INSERT INTO conversations (id, title, created_at, updated_at, summary, folded, steps_summary) VALUES (?1, ?2, ?1, ?1, '', 0, '')",
+                params![id, title],
+            )
+            .unwrap();
+        }
+        c.execute("INSERT INTO messages (conversation_id, role, content, created_at) VALUES (1, 'user', 'book a hotel', 1)", []).unwrap();
+        c.execute("INSERT INTO messages (conversation_id, role, content, created_at) VALUES (2, 'user', 'fix my CV for the Berlin job', 1)", []).unwrap();
+        c.execute("INSERT INTO messages (conversation_id, role, content, created_at) VALUES (3, 'user', 'all good', 1)", []).unwrap();
+        let ids = |q: &str| search_chats(&c, q).unwrap().iter().map(|c| c.id).collect::<Vec<_>>();
+        assert_eq!(ids("lisbon"), vec![1]);
+        assert_eq!(ids("berlin"), vec![2]);
+        assert_eq!(ids("hotel"), vec![1]);
+        assert_eq!(ids("%"), vec![3]);
+        assert_eq!(ids("nothing here"), Vec::<i64>::new());
     }
 }

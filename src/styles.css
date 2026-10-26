@@ -96,22 +96,9 @@ body[data-mode="widget"] #topbar {
   pointer-events: none;
 }
 
-body[data-mode="widget"] #status { display: none; }
-
-#status {
+#topbar-left {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--ink-dim);
-}
-
-#status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: rgb(var(--tint));
-  box-shadow: 0 0 10px rgba(var(--tint), 0.9);
+  pointer-events: auto;
 }
 
 #toolbar {
@@ -127,7 +114,8 @@ body[data-mode="widget"] #toolbar {
 
 body[data-mode="widget"] #widget:hover #toolbar { opacity: 1; }
 
-#toolbar button {
+#toolbar button,
+#topbar-left button {
   width: 28px;
   height: 28px;
   display: grid;
@@ -140,12 +128,14 @@ body[data-mode="widget"] #widget:hover #toolbar { opacity: 1; }
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-#toolbar button:hover {
+#toolbar button:hover,
+#topbar-left button:hover {
   background: var(--fill);
   color: var(--ink);
 }
 
 #toolbar button:focus-visible,
+#topbar-left button:focus-visible,
 #send-btn:focus-visible {
   outline: 2px solid rgba(var(--tint), 0.8);
   outline-offset: 1px;
@@ -312,19 +302,39 @@ body[data-mode="full"] #messages {
   right: 12px;
   top: 50%;
   transform: translateY(-50%);
-  max-height: 46%;
   width: 10px;
-  display: flex;
-  flex-direction: column;
   z-index: 3;
 }
 
 #chat-nav.hidden { display: none; }
 
+/* 8 lines show at once (8 x 16px). More than that and the column scrolls
+   under the pointer; the scrollbar is hidden and the end with more lines
+   beyond it is dimmed, so it reads as scrollable. */
+.nav-list {
+  width: 24px;
+  margin-left: -14px;
+  display: flex;
+  flex-direction: column;
+  max-height: 128px;
+  overflow-y: auto;
+  overflow-x: visible;
+  scrollbar-width: none;
+}
+
+.nav-list::-webkit-scrollbar { display: none; }
+
+.nav-list.scrolls {
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), rgba(0, 0, 0, 0.2) 100%);
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), rgba(0, 0, 0, 0.2) 100%);
+}
+
 .nav-tick {
   position: relative;
-  flex: 0 1 16px;
-  min-height: 6px;
+  flex: 0 0 16px;
+  height: 16px;
   padding: 0;
   border: none;
   background: none;
@@ -350,10 +360,10 @@ body[data-mode="full"] #messages {
 .nav-tick:hover::before,
 .nav-tick.active::before { background: rgba(255, 255, 255, 0.9); }
 
-.nav-label {
+.nav-tip {
   position: absolute;
   right: 30px;
-  top: 50%;
+  top: 0;
   transform: translateY(-50%) translateX(4px);
   width: max-content;
   max-width: 220px;
@@ -374,7 +384,7 @@ body[data-mode="full"] #messages {
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
-.nav-tick:hover .nav-label { opacity: 1; transform: translateY(-50%); }
+.nav-tip.show { opacity: 1; transform: translateY(-50%); }
 
 #empty {
   margin: auto;
@@ -1365,7 +1375,30 @@ body[data-mode="widget"] #history { display: none; }
   padding: 18px 10px 10px 18px;
 }
 
+.side-actions { display: flex; gap: 2px; }
+
 .side-head h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+
+#history-search { padding: 0 12px 8px; }
+#history-search.hidden { display: none; }
+
+#history-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--fill);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+#history-search-input:focus { border-color: rgba(var(--tint), 0.55); }
+#history-search-input::placeholder { color: var(--ink-dim); }
+#history-search-btn.on { background: var(--fill); color: var(--ink); }
 
 #history-list {
   flex: 1;

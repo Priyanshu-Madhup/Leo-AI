@@ -1,6 +1,6 @@
 [package]
 name = "siri-orb"
-version = "3.8.3"
+version = "3.8.4"
 description = "Leo, an AI assistant with a living orb"
 authors = ["Priyanshu Madhup"]
 edition = "2021"

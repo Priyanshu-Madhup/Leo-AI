@@ -40,8 +40,12 @@ const newChatBtn = document.querySelector<HTMLButtonElement>("#new-chat-btn")!;
 const historyBtn = document.querySelector<HTMLButtonElement>("#history-btn")!;
 const historyPanel = document.querySelector<HTMLDivElement>("#history")!;
 const historyList = document.querySelector<HTMLDivElement>("#history-list")!;
+const historySearchBtn = document.querySelector<HTMLButtonElement>("#history-search-btn")!;
+const historySearchRow = document.querySelector<HTMLDivElement>("#history-search")!;
+const historySearchInput = document.querySelector<HTMLInputElement>("#history-search-input")!;
 const historyClose = document.querySelector<HTMLButtonElement>("#history-close")!;
-const statusText = document.querySelector<HTMLSpanElement>("#status-text")!;
+// The status line in the top bar was removed; the orb's own motion shows the state.
+const statusText = document.createElement("span");
 const messagesEl = document.querySelector<HTMLDivElement>("#messages")!;
 const composer = document.querySelector<HTMLFormElement>("#composer")!;
 const composerInput = document.querySelector<HTMLTextAreaElement>("#composer-input")!;
@@ -489,6 +493,11 @@ const chatNav = document.querySelector<HTMLDivElement>("#chat-nav")!;
 const NAV_MIN_PROMPTS = 3; // more than 2 prompts from the user
 let navPrompts: HTMLElement[] = [];
 let navTicks: HTMLButtonElement[] = [];
+const navList = document.createElement("div");
+navList.className = "nav-list";
+const navTip = document.createElement("div");
+navTip.className = "nav-tip";
+chatNav.append(navList, navTip);
 
 function updateScrollDown() {
   const away = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
@@ -502,34 +511,109 @@ function updateNavActive() {
   navPrompts.forEach((el, i) => {
     if (el.getBoundingClientRect().top <= line) active = i;
   });
+  const before = navList.querySelector(".active");
   navTicks.forEach((t, i) => t.classList.toggle("active", i === active));
+  // Beyond 8 prompts the column scrolls: keep the current one in view, unless
+  // the user is scrolling the column themselves.
+  const tick = navTicks[active];
+  if (tick !== before && !chatNav.matches(":hover")) {
+    const top = tick.offsetTop;
+    if (top < navList.scrollTop || top + tick.offsetHeight > navList.scrollTop + navList.clientHeight) {
+      navList.scrollTo({ top: top - navList.clientHeight / 2, behavior: "smooth" });
+    }
+  }
+}
+
+// Dims the top and bottom lines of the column while there is more beyond them.
+function updateNavFade() {
+  const more = navList.scrollHeight - navList.clientHeight > 1;
+  const atTop = navList.scrollTop < 2;
+  const atBottom = navList.scrollTop + navList.clientHeight >= navList.scrollHeight - 2;
+  navList.style.setProperty("--fade-top", more && !atTop ? "28px" : "0px");
+  navList.style.setProperty("--fade-bottom", more && !atBottom ? "28px" : "0px");
+}
+
+function showNavTip(tick: HTMLElement, text: string) {
+  navTip.textContent = text;
+  const wrap = chatNav.getBoundingClientRect();
+  const box = tick.getBoundingClientRect();
+  navTip.style.top = `${box.top + box.height / 2 - wrap.top}px`;
+  navTip.classList.add("show");
 }
 
 function rebuildNav() {
   const prompts = Array.from(messagesEl.querySelectorAll<HTMLElement>(".msg.user"));
   if (prompts.length === navPrompts.length && prompts.every((el, i) => el === navPrompts[i])) return;
   navPrompts = prompts;
-  chatNav.replaceChildren();
+  navList.replaceChildren();
   navTicks = [];
-  chatNav.classList.toggle("hidden", prompts.length < NAV_MIN_PROMPTS);
-  if (prompts.length < NAV_MIN_PROMPTS) return;
+  const show = prompts.length >= NAV_MIN_PROMPTS;
+  chatNav.classList.toggle("hidden", !show);
+  if (!show) return;
+  // Up to 8 lines fit; beyond that the column scrolls (no visible scrollbar).
+  navList.classList.toggle("scrolls", prompts.length > 8);
   for (const el of prompts) {
     const tick = document.createElement("button");
     tick.type = "button";
     tick.className = "nav-tick";
-    const label = document.createElement("span");
-    label.className = "nav-label";
-    label.textContent = (el.textContent ?? "").trim() || "(image)";
-    tick.appendChild(label);
+    const text = (el.textContent ?? "").trim() || "(image)";
+    tick.addEventListener("mouseenter", () => showNavTip(tick, text));
     tick.addEventListener("click", () => {
       const offset = el.getBoundingClientRect().top - messagesEl.getBoundingClientRect().top;
       messagesEl.scrollTo({ top: messagesEl.scrollTop + offset - 100, behavior: "smooth" });
     });
-    chatNav.appendChild(tick);
+    navList.appendChild(tick);
     navTicks.push(tick);
   }
   updateNavActive();
+  updateNavFade();
 }
+
+// Wheel scrolling of the column: the same distance as a normal scroll, but
+// eased toward its target instead of jumping.
+let navTarget = 0;
+let navFrame = 0;
+let navLast = 0;
+
+function stepNavScroll(now: number) {
+  const dt = Math.min(now - navLast, 50);
+  navLast = now;
+  const diff = navTarget - navList.scrollTop;
+  if (Math.abs(diff) < 0.5) {
+    navList.scrollTop = navTarget;
+    navFrame = 0;
+    return;
+  }
+  navList.scrollTop += diff * (1 - Math.exp(-dt / 110));
+  navFrame = requestAnimationFrame(stepNavScroll);
+}
+
+navList.addEventListener(
+  "wheel",
+  (event) => {
+    const max = navList.scrollHeight - navList.clientHeight;
+    if (max <= 0) return;
+    event.preventDefault();
+    const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+    const from = navFrame ? navTarget : navList.scrollTop;
+    navTarget = Math.min(max, Math.max(0, from + delta));
+    if (!navFrame) {
+      navLast = performance.now();
+      navFrame = requestAnimationFrame(stepNavScroll);
+    }
+  },
+  { passive: false },
+);
+
+chatNav.addEventListener("mouseleave", () => navTip.classList.remove("show"));
+navList.addEventListener(
+  "scroll",
+  () => {
+    navTip.classList.remove("show");
+    updateNavFade();
+  },
+  { passive: true },
+);
 
 let chatUiQueued = false;
 function queueChatUi() {
@@ -1375,7 +1459,7 @@ function whenText(seconds: number): string {
 function showNoChats() {
   const none = document.createElement("div");
   none.className = "history-empty";
-  none.textContent = "No saved chats yet.";
+  none.textContent = historySearchInput.value.trim() ? "No chats found." : "No saved chats yet.";
   historyList.appendChild(none);
 }
 
@@ -1383,7 +1467,11 @@ async function renderHistory() {
   let chats: ChatInfo[] = [];
   let activeId: number | null = null;
   try {
-    [chats, activeId] = await Promise.all([invoke<ChatInfo[]>("history_list"), invoke<number | null>("history_current")]);
+    const query = historySearchInput.value.trim();
+    [chats, activeId] = await Promise.all([
+      query ? invoke<ChatInfo[]>("history_search", { query }) : invoke<ChatInfo[]>("history_list"),
+      invoke<number | null>("history_current"),
+    ]);
   } catch (err) {
     historyList.textContent = errorMessage(err);
     return;
@@ -1453,7 +1541,40 @@ async function renderHistory() {
   }
 }
 
+function setHistorySearch(open: boolean) {
+  historySearchRow.classList.toggle("hidden", !open);
+  historySearchBtn.classList.toggle("on", open);
+  if (open) {
+    historySearchInput.focus();
+  } else if (historySearchInput.value) {
+    historySearchInput.value = "";
+    void renderHistory();
+  }
+}
+
+historySearchBtn.addEventListener("click", () => setHistorySearch(historySearchRow.classList.contains("hidden")));
+let historySearchTimer = 0;
+historySearchInput.addEventListener("input", () => {
+  window.clearTimeout(historySearchTimer);
+  historySearchTimer = window.setTimeout(() => void renderHistory(), 150);
+});
+historySearchInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  // Escape first clears the search, then closes it; only then the sidebar.
+  event.stopPropagation();
+  if (historySearchInput.value) {
+    historySearchInput.value = "";
+    void renderHistory();
+  } else {
+    setHistorySearch(false);
+  }
+});
+
 async function openHistory() {
+  // A fresh look at the list starts without a search.
+  historySearchInput.value = "";
+  historySearchRow.classList.add("hidden");
+  historySearchBtn.classList.remove("on");
   // Opening while it is still sliding out cancels the close.
   window.clearTimeout(historyCloseTimer);
   historyPanel.classList.remove("closing");

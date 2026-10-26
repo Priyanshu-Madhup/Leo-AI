@@ -1,6 +1,6 @@
 # Leo — detailed project guide
 
-This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.8.3.**
+This file is written so that a person or an AI assistant can understand the whole project **without reading the source first**. It covers what Leo is, how it is built, every file's job, every command and event, every setting, how to run and test it, the safety rules, the conventions, and what is not built yet. Keep it up to date when you change behaviour. **Current version: 3.8.4.**
 
 > Project root: `P:\Leo\siri-orb` (the app; it is the root of the GitHub repo `Priyanshu-Madhup/Leo-AI`). `README.md` is the short user-facing page (install, release steps). One level up, `P:\Leo\Leo_ Functionalities.excalidraw` is the original feature diagram.
 
@@ -472,7 +472,9 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 - **What is loaded when**: `history_open(id)` restores the on-screen messages, the in-memory history (messages after `folded`), the context summary and the folded count; the next request of that chat seeds its steps summary from the saved row, so plan steps see what was already done (the plan-step wording says to build on it and not redo it unless the user asks again).
 - **Names**: right after the first message of a new chat, `history::name_chat` asks the model (in the background, same model) for a 2–5 word title in the message's language and stores it; the event `history://titled` refreshes the sidebar. Until then the chat is named after the start of the message. If the call fails the placeholder stays.
 - **Sidebar** (clock button, full mode only): slides in from the left (`side-in`) and out (`side-out`, 240 ms); lists chats newest first with the open one highlighted; clicking a chat opens it; each chat has its own **trash button** (first click turns it into "Delete?", second click deletes; deleting the open chat clears the screen); there is **no "delete all"**. Esc, ×, or a click on the dimmed area closes it.
-- Commands: `history_list`, `history_current`, `history_open`, `history_delete`; event `history://titled`. Unit tests cover the schema, cascade, the live-history calculation and title cleaning.
+- **Search**: the magnifier in the sidebar header opens a search box; typing (150 ms debounce) calls `history_search(query)`, which matches the chat name or any message, case-insensitively, with `%`/`_` taken literally (`search_chats`, unit-tested). Esc clears the search, then closes the box, then the sidebar; opening the sidebar starts without a search.
+- The top-left of the window holds the history button (`#topbar-left`); the old "Ready" status text and dot were removed.
+- Commands: `history_list`, `history_search`, `history_current`, `history_open`, `history_delete`; event `history://titled`. Unit tests cover the schema, cascade, the live-history calculation and title cleaning.
 
 ## 21. Google Docs behaviour (`agent.rs`, `agents.rs`)
 
@@ -511,6 +513,7 @@ GitHub repository secrets used: `TAURI_SIGNING_PRIVATE_KEY` (required), `TAURI_S
 
 ## 25. Version history (high level)
 
+- **3.8.4**: chat search in the sidebar (section 20), history button moved to the top-left (the status text was removed), scrolling prompt markers, new Google Docs writing flow (section 31).
 - **3.8.3**: scroll-down arrow, prompt navigator (section 30), smooth multi-line message bar, orb ripple rings removed.
 - **3.8.2**: calendar approval can be turned off (section 29); the voice no longer reads emoji or icon names.
 - **3.8.1**: guaranteed spoken narration of tool steps (end of section 27).
@@ -587,4 +590,11 @@ Voice is an **input/output layer around the existing text path**. There is one b
 ## 30. Scroll-down arrow and prompt navigator (`main.ts`, `styles.css`)
 
 - **Scroll-down arrow** (`#scroll-down`): a round button at the bottom middle of the chat, just above the composer. It shows when the chat is more than 80 px from the end and scrolls smoothly to the bottom.
-- **Prompt navigator** (`#chat-nav`): from the 3rd user prompt on, a column of short lines on the right edge, one per user prompt. Hovering one shows the prompt text (3 lines max); clicking scrolls to it; the line for the prompt currently in view is highlighted. Rebuilt from the `.msg.user` elements by a MutationObserver, so it follows New chat and reopened chats.
+- **Prompt navigator** (`#chat-nav`): from the 3rd user prompt on, a column of short lines on the right edge, one per user prompt, clear of the scrollbar. Hovering one magnifies it 2x and shows the prompt in a tooltip (one shared element, so the scrolling column never clips it); clicking scrolls to it; the line for the prompt in view is brighter. Up to 8 lines show; beyond that the column itself scrolls under the pointer (no visible scrollbar), and the top/bottom lines are dimmed while more lines lie beyond them. Rebuilt from the `.msg.user` elements by a MutationObserver, so it follows New chat and reopened chats.
+
+## 31. Writing new Google Docs (`agent.rs`, `agents.rs`, `tools.rs`)
+
+- A new document is written with the built-in tools `doc_draft_add { markdown }` (one call per part, about 1,200 words, no approval card, kept in `Ctx.doc_draft`) and then created ONCE with `doc_draft_publish { title }`, which runs `google__import_to_google_doc` (source_format `md`) through the normal approval card, duplicate-title check and failure counting. The old way (first part, then `modify_doc_text` appends) left raw Markdown and index errors after the first page; modify calls are now only for existing documents. A failed publish keeps the draft so it can be retried.
+- `clean_markdown` runs on every import (draft or direct): strips a wrapping code fence, turns literal `
+` into line breaks, and puts blank lines around headings, lists and tables (without them Drive leaves the symbols as text). Unit-tested.
+- Draft parts ending in an ellipsis are refused like other Docs writes. The agent loop limit is 12 rounds (`MAX_ITERATIONS`) so a long document fits.

@@ -31,7 +31,7 @@ use crate::tools;
 use crate::types::{ChatMessage, ToolCall};
 use crate::web::WebState;
 
-const MAX_ITERATIONS: usize = 8;
+const MAX_ITERATIONS: usize = 12;
 const MAX_DEPTH: usize = 3;
 const MAX_TOOL_RESULT_CHARS: usize = 8000;
 const MAX_HISTORY_MESSAGES: usize = 40;
@@ -173,6 +173,9 @@ pub struct Ctx {
     /// second create with the same title is refused (the agent edits the first
     /// instead of making copies).
     docs_created: Arc<Mutex<HashMap<String, String>>>,
+    /// The Markdown of a new document being written part by part with
+    /// `doc_draft_add`, created in one go by `doc_draft_publish`.
+    doc_draft: Arc<Mutex<String>>,
     /// Tools the user declined in this request (one entry per decline), shared
     /// by every agent, so a "no" is remembered instead of tried another way.
     declines: Arc<Mutex<Vec<String>>>,
@@ -304,13 +307,13 @@ fn truncate(mut text: String) -> String {
 /// the middle of its own document ("... the European ...") and would leave it
 /// unfinished.
 fn writes_unfinished_text(name: &str, args: &str) -> bool {
-    if !is_doc_edit(name) && !is_doc_create(name) {
+    if !is_doc_edit(name) && !is_doc_create(name) && name != "doc_draft_add" {
         return false;
     }
     let Ok(v) = serde_json::from_str::<Value>(args) else {
         return false;
     };
-    ["content", "text"].iter().any(|k| {
+    ["content", "text", "markdown"].iter().any(|k| {
         v.get(*k)
             .and_then(Value::as_str)
             .map(|t| {
@@ -492,7 +495,7 @@ pub fn run_agent<'a>(
 /// title: "Sure, I'm searching the web for latest news." Quick background
 /// lookups, questions and approvals are not announced.
 fn narration_line(name: &str, args: &str, call_id: &str) -> Option<String> {
-    if matches!(name, "current_datetime" | "get_location" | "recall_memory" | "remember" | "ask_user" | "set_calendar_auto_approve") {
+    if matches!(name, "current_datetime" | "get_location" | "recall_memory" | "remember" | "ask_user" | "set_calendar_auto_approve" | "doc_draft_add" | "doc_draft_publish") {
         return None;
     }
     let p = tools::present(name, args);
@@ -529,6 +532,12 @@ async fn execute_call(ctx: &Ctx, agent: AgentId, call: &ToolCall) -> Result<Stri
         let answer = interact::ask_user(&ctx.app, &ctx.turn, ctx.my_turn, call).await;
         ctx.extend(waiting_since.elapsed());
         answer
+    } else if name == "doc_draft_add" {
+        doc_draft_add(ctx, &call.function.arguments)
+    } else if name == "doc_draft_publish" {
+        doc_draft_publish(ctx, call).await
+    } else if name == "google__import_to_google_doc" {
+        run_tool(ctx, &with_clean_markdown(call)).await
     } else if let Some(target) = agents::delegation_target(name) {
         delegate(ctx, target, &call.function.arguments).await
     } else {
@@ -542,6 +551,135 @@ async fn execute_call(ctx: &Ctx, agent: AgentId, call: &ToolCall) -> Result<Stri
         Ok(text) => truncate(text),
         Err(err) => format!("Error: {err}"),
     })
+}
+
+/// One part of a new document, kept until `doc_draft_publish`. Writing a long
+/// document in parts and creating it in a single import keeps every page
+/// formatted the same way (no raw Markdown, no index errors).
+fn doc_draft_add(ctx: &Ctx, args: &str) -> Result<String, String> {
+    let part = serde_json::from_str::<Value>(args)
+        .ok()
+        .and_then(|v| v["markdown"].as_str().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Missing `markdown`.".to_string())?;
+    let mut draft = ctx.doc_draft.lock().unwrap();
+    if !draft.is_empty() {
+        draft.push_str("\n\n");
+    }
+    draft.push_str(&part);
+    let words = draft.split_whitespace().count();
+    Ok(format!(
+        "Added. The draft now has {words} words. Add the next part, or call doc_draft_publish once every part is written."
+    ))
+}
+
+/// Creates the Google Doc from the whole draft, through the normal approval
+/// card and the same checks as a direct import.
+async fn doc_draft_publish(ctx: &Ctx, call: &ToolCall) -> Result<String, String> {
+    let title = serde_json::from_str::<Value>(&call.function.arguments)
+        .ok()
+        .and_then(|v| v["title"].as_str().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Missing `title`.".to_string())?;
+    let draft = ctx.doc_draft.lock().unwrap().clone();
+    if draft.trim().is_empty() {
+        return Err("The draft is empty: write the document with doc_draft_add first.".to_string());
+    }
+    let import = ToolCall {
+        id: call.id.clone(),
+        kind: call.kind.clone(),
+        function: crate::types::FunctionCall {
+            name: "google__import_to_google_doc".to_string(),
+            arguments: json!({ "file_name": title, "source_format": "md", "content": clean_markdown(&draft) }).to_string(),
+        },
+    };
+    let result = run_tool(ctx, &import).await;
+    if result.is_ok() {
+        ctx.doc_draft.lock().unwrap().clear();
+    }
+    result
+}
+
+/// The same call with its Markdown tidied (see `clean_markdown`).
+fn with_clean_markdown(call: &ToolCall) -> ToolCall {
+    let mut out = call.clone();
+    if let Ok(mut v) = serde_json::from_str::<Value>(&call.function.arguments) {
+        if let Some(text) = v["content"].as_str().map(clean_markdown) {
+            v["content"] = Value::String(text);
+            out.function.arguments = v.to_string();
+        }
+    }
+    out
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum Line {
+    Blank,
+    Heading,
+    Table,
+    List,
+    Other,
+}
+
+fn line_kind(line: &str) -> Line {
+    let t = line.trim_start();
+    if t.is_empty() {
+        Line::Blank
+    } else if t.starts_with('#') && line.len() == t.len() {
+        Line::Heading
+    } else if t.starts_with('|') {
+        Line::Table
+    } else if t.starts_with("- ") || t.starts_with("* ") || t.starts_with("+ ") || {
+        let digits = t.chars().take_while(char::is_ascii_digit).count();
+        digits > 0 && t[digits..].starts_with(". ")
+    } {
+        Line::List
+    } else {
+        Line::Other
+    }
+}
+
+/// Markdown that Drive converts cleanly: no wrapping code fence, real line
+/// breaks, and blank lines around headings, lists and tables (without them
+/// they come out as plain text with the symbols still showing).
+fn clean_markdown(text: &str) -> String {
+    let mut text = text.replace("\r\n", "\n").trim().to_string();
+    if !text.contains('\n') && text.contains("\\n") {
+        text = text.replace("\\n", "\n");
+    }
+    if let Some(first) = text.lines().next() {
+        let tag = first.trim().to_lowercase();
+        if matches!(tag.as_str(), "```" | "```markdown" | "```md") && text.trim_end().ends_with("```") {
+            let body = &text[first.len()..];
+            text = body.trim_end().trim_end_matches('`').trim().to_string();
+        }
+    }
+
+    let mut out: Vec<&str> = Vec::new();
+    let mut in_fence = false;
+    let mut prev = Line::Blank;
+    for line in text.lines() {
+        let kind = line_kind(line);
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        }
+        if !in_fence && prev != Line::Blank && kind != Line::Blank {
+            let split = kind == Line::Heading
+                || prev == Line::Heading
+                || (kind == Line::Table) != (prev == Line::Table)
+                || (kind == Line::List && prev == Line::Other && !out.last().is_some_and(|l| l.starts_with(' ')));
+            if split {
+                out.push("");
+            }
+        }
+        // Never more than one blank line in a row.
+        if kind == Line::Blank && prev == Line::Blank {
+            continue;
+        }
+        out.push(line);
+        prev = kind;
+    }
+    out.join("\n")
 }
 
 /// Hands a job to another agent and returns its final answer.
@@ -823,6 +961,7 @@ pub async fn run_request(
         saved: Arc::new(Mutex::new(Vec::new())),
         docs_approved: Arc::new(Mutex::new(HashSet::new())),
         docs_created: Arc::new(Mutex::new(HashMap::new())),
+        doc_draft: Arc::new(Mutex::new(String::new())),
         declines: Arc::new(Mutex::new(Vec::new())),
         failures: Arc::new(Mutex::new(HashMap::new())),
         deadline: Arc::new(Mutex::new(Instant::now() + JOB_LIMIT)),
@@ -1052,5 +1191,16 @@ mod tests {
         // Valid JSON, but not an object.
         assert!(!arguments_are_valid(r#""just a string""#));
         assert!(!arguments_are_valid("[1,2]"));
+    }
+
+    #[test]
+    fn clean_markdown_adds_blank_lines_and_strips_a_fence() {
+        let md = "```markdown\n# Title\nIntro text\n## Part\n- a\n- b\n| x | y |\n| --- | --- |\n| 1 | 2 |\nDone\n```";
+        let out = super::clean_markdown(md);
+        assert_eq!(
+            out,
+            "# Title\n\nIntro text\n\n## Part\n\n- a\n- b\n\n| x | y |\n| --- | --- |\n| 1 | 2 |\n\nDone"
+        );
+        assert_eq!(super::clean_markdown("# A\\n\\nText"), "# A\n\nText");
     }
 }

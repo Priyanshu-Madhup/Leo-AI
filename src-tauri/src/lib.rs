@@ -448,6 +448,7 @@ pub fn run() {
             agent::agent_cancel,
             vision::screen_prepared,
             history::history_list,
+            history::history_search,
             prefs::set_calendar_auto_approve,
             profile::profile_get,
             profile::profile_save,

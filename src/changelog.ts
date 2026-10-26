@@ -10,6 +10,14 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "3.8.4",
+    features: [
+      "Search your chats: tap the magnifier in the Chats list and type a word; it finds chats by name or by anything said in them",
+      "The history button now sits in the top left, where the status text used to be",
+      "With many prompts in a chat, the markers on the right scroll smoothly, with the top and bottom ones dimmed to show there is more",
+    ],
+  },
+  {
     version: "3.8.3",
     features: [
       "A down arrow appears above the message bar when you are not at the end of the chat; tap it to jump to the latest message",
